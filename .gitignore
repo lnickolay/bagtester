@@ -1,0 +1,12 @@
+__pycache__/
+.mypy_cache/
+*.pyc
+
+.venv/
+.vscode/
+
+/_infos/
+/_unused/
+
+/data/ticker_data/*
+!/data/ticker_data/sample/
