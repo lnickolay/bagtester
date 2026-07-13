@@ -1,4 +1,5 @@
 black
+isort
 mypy
 pandas-stubs
 pip-tools

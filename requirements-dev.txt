@@ -8,15 +8,17 @@ ast-serialize==0.6.0
     # via mypy
 black==26.5.1
     # via -r requirements-dev.in
-build==1.5.0
+build==1.5.1
     # via pip-tools
 click==8.4.2
     # via
     #   black
     #   pip-tools
-librt==0.12.0
+isort==8.0.1
+    # via -r requirements-dev.in
+librt==0.13.0
     # via mypy
-mypy==2.1.0
+mypy==2.3.0
     # via -r requirements-dev.in
 mypy-extensions==1.1.0
     # via
