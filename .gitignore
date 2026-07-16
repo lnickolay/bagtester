@@ -8,7 +8,6 @@ __pycache__/
 /.opencode-home/
 
 /_infos/
-/_unused/
 
 /data/ticker_data/*
 !/data/ticker_data/sample/
