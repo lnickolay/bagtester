@@ -5,3 +5,7 @@ version = "0.1.0"
 
 [tool.black]
 line-length = 120
+
+[tool.pytest]
+testpaths = ["inttests"]
+pythonpath = ["src"]
