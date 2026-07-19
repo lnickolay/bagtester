@@ -10,7 +10,7 @@ if __name__ == "__main__":
     tickers = data_loader.get_included_tickers()
 
     engine = Engine(tickers, data_loader)
-    strategy = ShortTheGapStrategy(engine.broker, min_gap_up_pct=0.02)
+    strategy = ShortTheGapStrategy(engine.broker, min_gap_up_ratio=0.02)
 
     start_point = np.datetime64("2015-01-01")
     end_point = np.datetime64("2024-12-31")

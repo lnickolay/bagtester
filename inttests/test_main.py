@@ -13,7 +13,7 @@ def test_main():
 
     engine = Engine(tickers, data_loader)
     broker = engine.broker
-    strategy = ShortTheGapStrategy(broker, min_gap_up_pct=0.02)
+    strategy = ShortTheGapStrategy(broker, min_gap_up_ratio=0.02)
 
     start_point = np.datetime64("2015-01-01")
     end_point = np.datetime64("2024-12-31")

@@ -3,20 +3,23 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from core.enums import OrderDirection
-from core.order import Order, OrderType
+from core.order import Order
 
 if TYPE_CHECKING:
     import pandas as pd
 
     from core.broker import Broker
     from core.context import Context
+    from core.enums import OrderDirection
     from core.exit_rule_spec import ExitRuleSpec
+    from core.order import OrderType
+    from core.sizer import Sizer
 
 
 class Strategy(ABC):
 
     broker: Broker
+    sizer: Sizer
 
     # TODO: strategy probably shouldn't need to know broker
     def __init__(self, broker: Broker) -> None:
