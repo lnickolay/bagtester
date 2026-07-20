@@ -1,3 +1,4 @@
+import matplotlib.pyplot as plt
 import numpy as np
 
 from analytics.evaluation import show_results
@@ -16,4 +17,5 @@ if __name__ == "__main__":
     end_point = np.datetime64("2024-12-31")
 
     engine.run_strategy(strategy, tickers, start_point, end_point)
-    show_results(engine.broker, start_point, end_point)
+    fig = show_results(engine.broker, start_point, end_point)
+    plt.show()

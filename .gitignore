@@ -11,3 +11,5 @@ __pycache__/
 
 /data/ticker_data/*
 !/data/ticker_data/sample/
+
+/inttests/**/output/

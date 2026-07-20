@@ -1,13 +1,14 @@
 import numpy as np
 import pytest
 
-from analytics.evaluation import calculate_metrics
+from analytics.evaluation import calculate_metrics, plot_pnl_and_drawdowns
 from core.data_loader import YFinanceDataLoader
 from core.engine import Engine
+from inttests.helpers import save_test_plot
 from strategies.short_the_gap_strategy import ShortTheGapStrategy
 
 
-def test_main():
+def test_short_the_gap_strategy() -> None:
     data_loader = YFinanceDataLoader("sample")
     tickers = data_loader.get_included_tickers()
 
@@ -20,7 +21,10 @@ def test_main():
 
     engine.run_strategy(strategy, tickers, start_point, end_point)
 
-    eval_metrics = calculate_metrics(broker.get_equity_series(), start_point, end_point)
+    equity_series = broker.get_equity_series()
+    eval_metrics = calculate_metrics(equity_series, start_point, end_point)
+    fig = plot_pnl_and_drawdowns(equity_series, eval_metrics.drawdown_pct_series)
+    save_test_plot(fig, __file__, "pnl_and_drawdowns.png")
 
     assert broker.opened_positions_counter == 891
     assert broker.closed_positions_counter == 891

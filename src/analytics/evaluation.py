@@ -9,6 +9,7 @@ import pandas as pd
 
 if TYPE_CHECKING:
     import numpy as np
+    from matplotlib.figure import Figure
 
     from core.broker import Broker
 
@@ -22,7 +23,7 @@ class EvalMetrics:
 
 
 # TODO: show_results() probably shouldn't need to know broker
-def show_results(broker: Broker, start_date: np.datetime64, end_date: np.datetime64) -> None:
+def show_results(broker: Broker, start_date: np.datetime64, end_date: np.datetime64) -> Figure:
     equity_series = broker.get_equity_series()
     eval_metrics = calculate_metrics(equity_series, start_date, end_date)
 
@@ -32,7 +33,7 @@ def show_results(broker: Broker, start_date: np.datetime64, end_date: np.datetim
     print(f"Max Drawdown: {eval_metrics.max_drawdown_pct:.2f}%")
     print("Plotting PnL and drawdown graphs.")
 
-    _plot_pnl_and_drawdowns(equity_series, eval_metrics.drawdown_pct_series)
+    return plot_pnl_and_drawdowns(equity_series, eval_metrics.drawdown_pct_series)
 
 
 def calculate_metrics(equity_series: pd.Series, start_date: np.datetime64, end_date: np.datetime64) -> EvalMetrics:
@@ -42,8 +43,6 @@ def calculate_metrics(equity_series: pd.Series, start_date: np.datetime64, end_d
 
     start_balance = equity_series.iloc[0]
     end_balance = equity_series.iloc[-1]
-
-    # print(f"{start_date} {end_date} - {start_balance} {end_balance}")
 
     delta_years = pd.Timedelta(end_date - start_date).days / 365.2425
     cagr_pct = (((end_balance / start_balance) ** (1 / delta_years)) - 1.0) * 100.0
@@ -56,7 +55,7 @@ def calculate_metrics(equity_series: pd.Series, start_date: np.datetime64, end_d
     )
 
 
-def _plot_pnl_and_drawdowns(equity_series: pd.Series, drawdown_pct_series: pd.Series) -> None:
+def plot_pnl_and_drawdowns(equity_series: pd.Series, drawdown_pct_series: pd.Series) -> Figure:
     fig, (ax_eq, ax_dd) = plt.subplots(2, 1, figsize=(12, 8), sharex=True, gridspec_kw={"height_ratios": [3, 1]})
 
     # configure PnL curve
@@ -79,5 +78,5 @@ def _plot_pnl_and_drawdowns(equity_series: pd.Series, drawdown_pct_series: pd.Se
     ax_dd.set_title("Drawdowns")
     ax_dd.grid(True, linestyle="--", alpha=0.3)
 
-    plt.tight_layout()
-    plt.show()
+    fig.tight_layout()
+    return fig
