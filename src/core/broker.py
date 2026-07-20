@@ -8,13 +8,11 @@ from core.condition import PriceCondition
 from core.enums import BarSubstep, OrderType
 from core.order import Order
 from core.position import Position
+from debug_settings import PRINT_DEBUG_OUTPUT
 
 if TYPE_CHECKING:
     from core.context import Context
     from core.exit_rule import ExitRule
-
-
-DEBUG = False
 
 
 class Broker:
@@ -46,6 +44,9 @@ class Broker:
     def get_equity_series(self) -> pd.Series:
         bar_indexes, equities = zip(*self._equity_history)
         return pd.Series(equities, index=bar_indexes)
+
+    def get_position(self, ticker: str) -> Position | None:
+        return self._positions.get(ticker)
 
     def update(self, context: Context) -> None:
         self._update_orders(context)
@@ -125,7 +126,7 @@ class Broker:
         self._positions[order.ticker] = position
         self.opened_positions_counter += 1
 
-        if DEBUG:
+        if PRINT_DEBUG_OUTPUT:
             print(
                 f"{pd.Timestamp(context.bar_index).date()} - Opened new {position.side.name} position. "
                 + f"Ticker: {position.ticker}, Price {price:.2f}, Size: {order.size:.2f}, "
@@ -157,7 +158,7 @@ class Broker:
 
         self._cash += position.side.sign() * size_to_close * price
 
-        if DEBUG:
+        if PRINT_DEBUG_OUTPUT:
             print(
                 f"{pd.Timestamp(context.bar_index).date()} ({context.bar_substep.name}) - "
                 + f"Closed {position.side.name} position. Reason: {exit_rule.exit_rule_type.name}, "
