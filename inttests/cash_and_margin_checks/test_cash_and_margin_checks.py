@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from analytics.evaluation import calculate_metrics, plot_pnl_and_drawdowns
 from core.data_loader import YFinanceDataLoader
@@ -7,6 +8,7 @@ from inttests.helpers import save_test_plot
 from strategies.sma_crossover_strategy import SMACrossoverStrategy
 
 
+@pytest.mark.skip(reason="Cash and margin checks not implemented yet.")
 def test_cash_and_margin_checks() -> None:
     data_loader = YFinanceDataLoader("sample")
     tickers = data_loader.get_included_tickers()

@@ -14,6 +14,7 @@ bagtester is a simple backtesting engine for stock and crypto trading strategies
 - `src/` — application runtime code
 - `inttests/` — integration tests (one subdir per inttest)
 - `data/` — OHLCV data, ticker lists, metadata
+- `_notes/` — notes on project design, planned features, TODOs etc.
 
 ## Development Rules
 
@@ -25,3 +26,4 @@ bagtester is a simple backtesting engine for stock and crypto trading strategies
 - Add type annotations so the code is valid under `mypy --strict`.
 - Never import a type at runtime if it is only used for type annotations. Put those imports under `if TYPE_CHECKING:`.
 - Never add imports or re-exports to `__init__.py`. Leave `__init__.py` empty.
+- Keep `_notes/` updated when discussing or working on topics related to the notes contained therein.
