@@ -21,15 +21,14 @@ class Engine:
     _ticker_universe: list[str]
     broker: Broker
     _all_price_data: dict[str, pd.DataFrame]
-    # TODO: rename all_trading_days to something that also fits for non-daily bars
-    _all_trading_days: np.ndarray
+    _all_bar_times: np.ndarray
 
     def __init__(self, ticker_universe: list[str], loader: DataLoader) -> None:
         self._ticker_universe = ticker_universe
         self.broker = Broker(10000.0)
         # TODO: don't load price data of tickers not needed for simulation
         self._all_price_data = loader.load_price_data(ticker_universe)
-        self._all_trading_days = self._determine_all_trading_days()
+        self._all_bar_times = self._determine_all_bar_times()
 
     def run_strategy(
         self,
@@ -38,22 +37,18 @@ class Engine:
         start_point: np.datetime64 | None = None,
         end_point: np.datetime64 | None = None,
     ) -> pd.Series:
-        # TODO: possibly rename runtime measurement variables
-        simulation_start_time = time.perf_counter()
+        simulation_timer_start = time.perf_counter()
 
         if tickers is None:
             tickers = self._ticker_universe
         if start_point is None:
-            start_point = self._all_trading_days[0]
+            start_point = self._all_bar_times[0]
         if end_point is None:
-            end_point = self._all_trading_days[-1]
+            end_point = self._all_bar_times[-1]
 
-        # TODO: rename trading_days to something that also fits for non-daily bars
-        trading_days = self._all_trading_days[
-            (self._all_trading_days >= start_point) & (self._all_trading_days <= end_point)
-        ]
+        bar_times = self._all_bar_times[(self._all_bar_times >= start_point) & (self._all_bar_times <= end_point)]
 
-        print(f"Simulating trading strategy on {len(tickers)} assets for {len(trading_days)} trading days.")
+        print(f"Simulating trading strategy on {len(tickers)} assets for {len(bar_times)} trading days.")
 
         price_data = {
             ticker: self._all_price_data[ticker].loc[start_point:end_point] for ticker in tickers  # type: ignore[misc]
@@ -61,28 +56,28 @@ class Engine:
 
         indicator_data = strategy.initialize(price_data)
 
-        for bar_step, bar_index in enumerate(trading_days, start=1):
-            context = Context(price_data, indicator_data, bar_index, bar_step, BarSubstep.OPEN)
+        for bar_pos, bar_time in enumerate(bar_times, start=1):
+            context = Context(price_data, indicator_data, bar_time, bar_pos, BarSubstep.OPEN)
             # TODO: check if this execution order makes sense: the way it is currently implemented, pre_open() uses an
             # outdated broker.equity value
             strategy.pre_open(context)
             self.broker.update(context)
 
-            context = Context(price_data, indicator_data, bar_index, bar_step, BarSubstep.CLOSE)
+            context = Context(price_data, indicator_data, bar_time, bar_pos, BarSubstep.CLOSE)
             strategy.pre_close(context)
             self.broker.update(context)
 
-            if bar_step % 100 == 0:
-                print(f"Progress: {bar_step}/{len(trading_days)} trading days simulated.")
+            if bar_pos % 100 == 0:
+                print(f"Progress: {bar_pos}/{len(bar_times)} trading days simulated.")
 
-        simulation_duration = time.perf_counter() - simulation_start_time
+        simulation_timer_elapsed = time.perf_counter() - simulation_timer_start
         print(
-            f"Finished simulating trading strategy on {len(tickers)} assets for {len(trading_days)} trading "
-            + f"days. Total time required to simulate strategy: {simulation_duration:.1f}s"
+            f"Finished simulating trading strategy on {len(tickers)} assets for {len(bar_times)} trading "
+            + f"days. Total time required to simulate strategy: {simulation_timer_elapsed:.1f}s"
         )
         print("-" * 10)
 
         return self.broker.get_equity_series()
 
-    def _determine_all_trading_days(self) -> np.ndarray:
+    def _determine_all_bar_times(self) -> np.ndarray:
         return np.unique(np.concatenate([df.index.values for df in self._all_price_data.values()]))

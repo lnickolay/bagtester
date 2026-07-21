@@ -30,18 +30,18 @@ class Condition(ABC):
 
 class LifetimeCondition(Condition):
 
-    _from_bar_step: int
+    _from_bar_pos: int
     _lifetime: int
 
     def __init__(
-        self, from_bar_step: int, lifetime: int, evaluated_substeps: tuple[BarSubstep, ...] = tuple(BarSubstep)
+        self, from_bar_pos: int, lifetime: int, evaluated_substeps: tuple[BarSubstep, ...] = tuple(BarSubstep)
     ) -> None:
         super().__init__(evaluated_substeps)
-        self._from_bar_step = from_bar_step
+        self._from_bar_pos = from_bar_pos
         self._lifetime = lifetime
 
     def _check_condition(self, context: Context, ticker: str) -> bool:
-        return context.bar_step >= self._from_bar_step + self._lifetime
+        return context.bar_pos >= self._from_bar_pos + self._lifetime
 
 
 class PriceCondition(Condition):

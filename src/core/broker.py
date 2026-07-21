@@ -42,8 +42,8 @@ class Broker:
         self._orders[order.ticker] = order
 
     def get_equity_series(self) -> pd.Series:
-        bar_indexes, equities = zip(*self._equity_history)
-        return pd.Series(equities, index=bar_indexes)
+        bar_times, equities = zip(*self._equity_history)
+        return pd.Series(equities, index=bar_times)
 
     def get_position(self, ticker: str) -> Position | None:
         return self._positions.get(ticker)
@@ -93,7 +93,7 @@ class Broker:
             ticker: pd.Series(
                 {
                     # asof() gets the last non-NaN price
-                    col: context.price_data[ticker][col].asof(context.bar_index)
+                    col: context.price_data[ticker][col].asof(context.bar_time)
                     for col in context.price_data[ticker].columns
                 }
             )
@@ -107,8 +107,8 @@ class Broker:
 
         if context.bar_substep == BarSubstep.CLOSE:
             if not self._equity_history:
-                self._equity_history.append((context.bar_index, self._initial_equity))
-            self._equity_history.append((context.bar_index, equity))
+                self._equity_history.append((context.bar_time, self._initial_equity))
+            self._equity_history.append((context.bar_time, equity))
 
     def _get_open_tickers(self) -> set[str]:
         return set(self._orders.keys()) | set(self._positions.keys())
@@ -122,13 +122,13 @@ class Broker:
         price = context.get_price(order.ticker, context.bar_substep.value)
         total_value = order.size * price
         self._cash -= order.direction.sign() * total_value
-        position = Position.from_order(order, price, context.bar_index, context.bar_step)
+        position = Position.from_order(order, price, context.bar_time, context.bar_pos)
         self._positions[order.ticker] = position
         self.opened_positions_counter += 1
 
         if PRINT_DEBUG_OUTPUT:
             print(
-                f"{pd.Timestamp(context.bar_index).date()} - Opened new {position.side.name} position. "
+                f"{pd.Timestamp(context.bar_time).date()} - Opened new {position.side.name} position. "
                 + f"Ticker: {position.ticker}, Price {price:.2f}, Size: {order.size:.2f}, "
                 + f"Total value: {total_value:.2f}."
             )
@@ -160,7 +160,7 @@ class Broker:
 
         if PRINT_DEBUG_OUTPUT:
             print(
-                f"{pd.Timestamp(context.bar_index).date()} ({context.bar_substep.name}) - "
+                f"{pd.Timestamp(context.bar_time).date()} ({context.bar_substep.name}) - "
                 + f"Closed {position.side.name} position. Reason: {exit_rule.exit_rule_type.name}, "
                 + f"Ticker: {position.ticker}, Price {price:.2f}, Size: {size_to_close:.2f}, "
                 + f"Total value: {size_to_close * price:.2f}."

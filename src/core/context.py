@@ -17,8 +17,8 @@ if TYPE_CHECKING:
 class Context:
     price_data: dict[str, pd.DataFrame]
     _indicator_data: dict[str, pd.DataFrame]
-    bar_index: pd.Timestamp
-    bar_step: int
+    bar_time: pd.Timestamp
+    bar_pos: int
     bar_substep: BarSubstep
 
     def get_price(self, ticker: str, col: str, bars_back: int = 0) -> float:
@@ -36,11 +36,11 @@ class Context:
         if df is None or col not in df.columns:
             return np.nan
 
-        if self.bar_index not in df.index:
+        if self.bar_time not in df.index:
             return np.nan
 
-        base_pos = df.index.get_loc(self.bar_index)
-        assert isinstance(base_pos, int), f"Non-unique index at {self.bar_index}."
+        base_pos = df.index.get_loc(self.bar_time)
+        assert isinstance(base_pos, int), f"Non-unique index at {self.bar_time}."
         pos = base_pos - bars_back
 
         if pos < 0 or pos >= len(df):

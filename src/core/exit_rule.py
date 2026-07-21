@@ -62,7 +62,7 @@ class ExitRule:
                 return cls(ExitRuleType.TAKE_PROFIT, position, cond, size_pct)
 
             case TimedExitSpec(lifetime=lifetime, size_pct=size_pct):
-                cond = LifetimeCondition(position.entry_bar_step, lifetime, evaluated_substeps=spec.evaluated_substeps)
+                cond = LifetimeCondition(position.entry_bar_pos, lifetime, evaluated_substeps=spec.evaluated_substeps)
                 return cls(ExitRuleType.TIMED_EXIT, position, cond, size_pct)
 
             case _:
