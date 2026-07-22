@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-backtester is a backtesting engine for stock trading strategies, written in Python. It simulates trading strategies bar
+bagtester is a backtesting engine for stock trading strategies, written in Python. It simulates trading strategies bar
 by bar using historical OHLCV data. Custom strategies are built by subclassing the `Strategy` base class, an example
 strategy is included. The engine supports declarative exit rules, multi-asset portfolios, and produces equity curves
 with performance metrics.
