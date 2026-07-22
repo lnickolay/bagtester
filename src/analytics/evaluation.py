@@ -8,7 +8,6 @@ import matplotlib.ticker as mtick
 import pandas as pd
 
 if TYPE_CHECKING:
-    import numpy as np
     from matplotlib.figure import Figure
 
     from core.broker import Broker
@@ -23,9 +22,9 @@ class EvalMetrics:
 
 
 # TODO: show_results() probably shouldn't need to know broker
-def show_results(broker: Broker, start_date: np.datetime64, end_date: np.datetime64) -> Figure:
+def show_results(broker: Broker, start_time: pd.Timestamp, end_time: pd.Timestamp) -> Figure:
     equity_series = broker.get_equity_series()
-    eval_metrics = calculate_metrics(equity_series, start_date, end_date)
+    eval_metrics = calculate_metrics(equity_series, start_time, end_time)
 
     print(f"Simulated timespan: {eval_metrics.delta_years:.2f} years")
     print(f"Opened / closed positions: {broker.opened_positions_counter} / {broker.closed_positions_counter}")
@@ -36,7 +35,7 @@ def show_results(broker: Broker, start_date: np.datetime64, end_date: np.datetim
     return plot_pnl_and_drawdowns(equity_series, eval_metrics.drawdown_pct_series)
 
 
-def calculate_metrics(equity_series: pd.Series, start_date: np.datetime64, end_date: np.datetime64) -> EvalMetrics:
+def calculate_metrics(equity_series: pd.Series, start_time: pd.Timestamp, end_time: pd.Timestamp) -> EvalMetrics:
     # calculate drawdowns
     running_max_series = equity_series.cummax()
     drawdown_pct_series = ((equity_series - running_max_series) / running_max_series) * 100.0
@@ -44,7 +43,7 @@ def calculate_metrics(equity_series: pd.Series, start_date: np.datetime64, end_d
     start_balance = equity_series.iloc[0]
     end_balance = equity_series.iloc[-1]
 
-    delta_years = pd.Timedelta(end_date - start_date).days / 365.2425
+    delta_years = pd.Timedelta(end_time - start_time).days / 365.2425
     cagr_pct = (((end_balance / start_balance) ** (1 / delta_years)) - 1.0) * 100.0
 
     return EvalMetrics(

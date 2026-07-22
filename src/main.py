@@ -1,5 +1,5 @@
 import matplotlib.pyplot as plt
-import numpy as np
+import pandas as pd
 
 from analytics.evaluation import show_results
 from core.data_loader import YFinanceDataLoader
@@ -9,13 +9,13 @@ from strategies.short_the_gap_strategy import ShortTheGapStrategy
 if __name__ == "__main__":
     data_loader = YFinanceDataLoader("sample")
     tickers = data_loader.get_included_tickers()
+    start_time = pd.Timestamp("2015-01-01")
+    end_time = pd.Timestamp("2024-12-31")
+    price_data = data_loader.load_price_data(tickers, start_time, end_time)
 
-    engine = Engine(tickers, data_loader)
+    engine = Engine()
     strategy = ShortTheGapStrategy(engine.broker, min_gap_up_ratio=0.02)
 
-    start_point = np.datetime64("2015-01-01")
-    end_point = np.datetime64("2024-12-31")
-
-    engine.run_strategy(strategy, tickers, start_point, end_point)
-    fig = show_results(engine.broker, start_point, end_point)
+    engine.run_strategy(strategy, price_data)
+    fig = show_results(engine.broker, start_time, end_time)
     plt.show()

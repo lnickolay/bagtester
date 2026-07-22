@@ -4,55 +4,27 @@ import time
 from typing import TYPE_CHECKING
 
 import numpy as np
+import pandas as pd
 
 from core.broker import Broker
 from core.context import Context
-from core.data_loader import DataLoader
 from core.enums import BarSubstep
 
 if TYPE_CHECKING:
-    import pandas as pd
-
     from core.strategy import Strategy
 
 
 class Engine:
 
-    _ticker_universe: list[str]
     broker: Broker
-    _all_price_data: dict[str, pd.DataFrame]
-    _all_bar_times: np.ndarray
 
-    def __init__(self, ticker_universe: list[str], loader: DataLoader) -> None:
-        self._ticker_universe = ticker_universe
-        self.broker = Broker(10000.0)
-        # TODO: don't load price data of tickers not needed for simulation
-        self._all_price_data = loader.load_price_data(ticker_universe)
-        self._all_bar_times = self._determine_all_bar_times()
+    def __init__(self, initial_cash: float = 10000.0) -> None:
+        self.broker = Broker(initial_cash)
 
-    def run_strategy(
-        self,
-        strategy: Strategy,
-        tickers: list[str] | None = None,
-        start_point: np.datetime64 | None = None,
-        end_point: np.datetime64 | None = None,
-    ) -> pd.Series:
+    def run_strategy(self, strategy: Strategy, price_data: dict[str, pd.DataFrame]) -> pd.Series:
         simulation_timer_start = time.perf_counter()
-
-        if tickers is None:
-            tickers = self._ticker_universe
-        if start_point is None:
-            start_point = self._all_bar_times[0]
-        if end_point is None:
-            end_point = self._all_bar_times[-1]
-
-        bar_times = self._all_bar_times[(self._all_bar_times >= start_point) & (self._all_bar_times <= end_point)]
-
-        print(f"Simulating trading strategy on {len(tickers)} assets for {len(bar_times)} trading days.")
-
-        price_data = {
-            ticker: self._all_price_data[ticker].loc[start_point:end_point] for ticker in tickers  # type: ignore[misc]
-        }
+        bar_times = pd.DatetimeIndex(np.unique(np.concatenate([df.index.values for df in price_data.values()])))
+        print(f"Simulating trading strategy on {len(price_data)} assets for {len(bar_times)} trading days.")
 
         indicator_data = strategy.initialize(price_data)
 
@@ -72,12 +44,9 @@ class Engine:
 
         simulation_timer_elapsed = time.perf_counter() - simulation_timer_start
         print(
-            f"Finished simulating trading strategy on {len(tickers)} assets for {len(bar_times)} trading "
+            f"Finished simulating trading strategy on {len(price_data)} assets for {len(bar_times)} trading "
             + f"days. Total time required to simulate strategy: {simulation_timer_elapsed:.1f}s"
         )
         print("-" * 10)
 
         return self.broker.get_equity_series()
-
-    def _determine_all_bar_times(self) -> np.ndarray:
-        return np.unique(np.concatenate([df.index.values for df in self._all_price_data.values()]))

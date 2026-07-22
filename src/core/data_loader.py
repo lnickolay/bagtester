@@ -5,18 +5,21 @@ from abc import ABC, abstractmethod
 
 import pandas as pd
 
-from paths import TICKER_DATA, included_tickers_file
+from paths import included_tickers_file, ohclv_dir
 
 
 class DataLoader(ABC):
 
     def __init__(self, source: str) -> None:
-        # TODO: check if one of these attributes can be removed
         self._source = source
-        self._root = TICKER_DATA / source
 
     @abstractmethod
-    def load_price_data(self, tickers: list[str]) -> dict[str, pd.DataFrame]: ...
+    def load_price_data(
+        self,
+        tickers: list[str],
+        start_time: pd.Timestamp | None = None,
+        end_time: pd.Timestamp | None = None,
+    ) -> dict[str, pd.DataFrame]: ...
 
     @abstractmethod
     def get_included_tickers(self) -> list[str]: ...
@@ -27,7 +30,12 @@ class YFinanceDataLoader(DataLoader):
     def __init__(self, source: str = "yfinance") -> None:
         super().__init__(source)
 
-    def load_price_data(self, tickers: list[str]) -> dict[str, pd.DataFrame]:
+    def load_price_data(
+        self,
+        tickers: list[str],
+        start_time: pd.Timestamp | None = None,
+        end_time: pd.Timestamp | None = None,
+    ) -> dict[str, pd.DataFrame]:
         load_timer_start = time.perf_counter()
         print(f"Loading OHLCV data for {len(tickers)} assets.")
 
@@ -35,7 +43,8 @@ class YFinanceDataLoader(DataLoader):
 
         for i, ticker in enumerate(tickers, start=1):
             df = pd.read_csv(
-                self._root / "ohlcv_1d_max" / f"{ticker}_1d_max.csv",
+                ohclv_dir(self._source) / f"{ticker}_1d_max.csv",
+                usecols=["Date", "Open", "High", "Low", "Close", "Volume"],
                 dtype={
                     "Date": str,
                     "Open": float,
@@ -43,8 +52,6 @@ class YFinanceDataLoader(DataLoader):
                     "Low": float,
                     "Close": float,
                     "Volume": int,
-                    "Dividends": float,
-                    "Stock Splits": float,
                 },
             )
             df.rename(columns={"Date": "Time"}, inplace=True)
@@ -53,7 +60,7 @@ class YFinanceDataLoader(DataLoader):
             df["Time"] = df["Time"].dt.tz_convert(None)
             df.set_index("Time", inplace=True)
 
-            price_data[ticker] = df
+            price_data[ticker] = df.loc[start_time:end_time]
 
             if i % 100 == 0:
                 print(f"Progress: {i}/{len(tickers)} assets loaded.")

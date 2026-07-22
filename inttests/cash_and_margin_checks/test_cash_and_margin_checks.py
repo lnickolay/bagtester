@@ -1,4 +1,4 @@
-import numpy as np
+import pandas as pd
 import pytest
 
 from analytics.evaluation import calculate_metrics, plot_pnl_and_drawdowns
@@ -12,18 +12,18 @@ from strategies.sma_crossover_strategy import SMACrossoverStrategy
 def test_cash_and_margin_checks() -> None:
     data_loader = YFinanceDataLoader("sample")
     tickers = data_loader.get_included_tickers()
+    start_time = pd.Timestamp("2024-01-01")
+    end_time = pd.Timestamp("2024-12-31")
+    price_data = data_loader.load_price_data(tickers, start_time, end_time)
 
-    engine = Engine(tickers, data_loader)
+    engine = Engine()
     broker = engine.broker
     strategy = SMACrossoverStrategy(engine.broker, pos_size_ratio=0.5)
 
-    start_point = np.datetime64("2024-01-01")
-    end_point = np.datetime64("2024-12-31")
-
-    engine.run_strategy(strategy, tickers, start_point, end_point)
+    engine.run_strategy(strategy, price_data)
 
     equity_series = broker.get_equity_series()
-    eval_metrics = calculate_metrics(equity_series, start_point, end_point)
+    eval_metrics = calculate_metrics(equity_series, start_time, end_time)
     fig = plot_pnl_and_drawdowns(equity_series, eval_metrics.drawdown_pct_series)
     save_test_plot(fig, __file__, "pnl_and_drawdowns.png")
 
