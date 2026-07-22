@@ -1,0 +1,13 @@
+[project]
+requires-python = "~=3.11.0"
+name = "bagtester"
+version = "0.1.0"
+
+[project.scripts]
+bagtester = "main_new:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 120

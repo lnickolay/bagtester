@@ -21,17 +21,15 @@ class Position:
     initial_size: float
     size_pct: float
     entry_price: float
-    entry_bar_index: pd.Timestamp
-    entry_bar_step: int
+    entry_bar_time: pd.Timestamp
+    entry_bar_pos: int
     # TODO: use tuples here instead of lists?
     stop_loss_rules: list[ExitRule] = field(default_factory=list)
     take_profit_rules: list[ExitRule] = field(default_factory=list)
     timed_exit_rules: list[ExitRule] = field(default_factory=list)
 
     @classmethod
-    def from_order(
-        cls, order: Order, entry_price: float, entry_bar_index: pd.Timestamp, entry_bar_step: int
-    ) -> Position:
+    def from_order(cls, order: Order, entry_price: float, entry_bar_time: pd.Timestamp, entry_bar_pos: int) -> Position:
         side = PositionSide.LONG if order.direction == OrderDirection.BUY else PositionSide.SHORT
         # generate new position object first (the position object is needed for exit rule generation)
         position = cls(
@@ -41,8 +39,8 @@ class Position:
             initial_size=order.size,
             size_pct=1.0,
             entry_price=entry_price,
-            entry_bar_index=entry_bar_index,
-            entry_bar_step=entry_bar_step,
+            entry_bar_time=entry_bar_time,
+            entry_bar_pos=entry_bar_pos,
         )
         # generate exit rules from specs and add them to the appropriate lists
         for spec in order.stop_loss_specs:
