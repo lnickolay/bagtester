@@ -1,22 +1,21 @@
 from enum import Enum, auto
 
-
-class BarSubstep(Enum):
-    OPEN = "Open"
-    CLOSE = "Close"
-
-
-class Comparator(Enum):
-    LESS = "<"
-    GREATER = ">"
-    LESS_OR_EQUAL = "<="
-    GREATER_OR_EQUAL = ">="
+# class BarSubstep(Enum):
+#     OPEN = "Open"
+#     CLOSE = "Close"
 
 
-class ExitRuleType(Enum):
-    STOP_LOSS = auto()
-    TAKE_PROFIT = auto()
-    TIMED_EXIT = auto()
+# class Comparator(Enum):
+#     LESS = "<"
+#     GREATER = ">"
+#     LESS_OR_EQUAL = "<="
+#     GREATER_OR_EQUAL = ">="
+
+
+# class ExitRuleType(Enum):
+#     STOP_LOSS = auto()
+#     TAKE_PROFIT = auto()
+#     TIMED_EXIT = auto()
 
 
 class OrderDirection(Enum):

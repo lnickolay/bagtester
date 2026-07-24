@@ -4,8 +4,6 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from core.enums import OrderDirection
-from core.order import OrderType
 from core.sizer import EquityRatioSizer
 from core.strategy import Strategy
 
@@ -44,23 +42,39 @@ class SMACrossoverStrategy(Strategy):
             )
         return sma_data
 
-    # TODO
-    def pre_open(self, context: Context) -> None:
-        for ticker in context.get_tickers():
-            s_is_over_l = context.get_indicator(ticker, "SMAShort") > context.get_indicator(ticker, "SMALong")
-            s_was_over_l = context.get_indicator(ticker, "SMAShort", 1) > context.get_indicator(ticker, "SMALong", 1)
-            crossed_over = s_is_over_l and not s_was_over_l
-            crossed_under = not s_is_over_l and s_was_over_l
+    def process_ticker(self, context: Context) -> None:
+        s_is_over_l = context.get_indicator("SMAShort") > context.get_indicator("SMALong")
+        s_was_over_l = context.get_indicator("SMAShort", bars_back=1) > context.get_indicator("SMALong", bars_back=1)
+        crossed_over = s_is_over_l and not s_was_over_l
+        crossed_under = not s_is_over_l and s_was_over_l
 
-            price = context.get_price(ticker, "Close")
+        if crossed_over or crossed_under:
+            price = context.get_price("Close")
             size = self.sizer.calc_order_size(price, self.broker.equity, None)
-            if self.broker.get_position(ticker) is not None:
+            if self.broker.get_position(context.current_ticker) is not None:
                 size *= 2
-
             if crossed_over:
-                self.create_order(ticker, OrderDirection.BUY, OrderType.MARKET, size)
-            elif crossed_under:
-                self.create_order(ticker, OrderDirection.SELL, OrderType.MARKET, size)
+                self.buy(size, context.current_ticker)
+            else:
+                self.sell(size, context.current_ticker)
 
-    def pre_close(self, context: Context) -> None:
-        pass
+    # TODO
+    # def pre_open(self, context: Context) -> None:
+    #     for ticker in context.get_tickers():
+    #         s_is_over_l = context.get_indicator(ticker, "SMAShort") > context.get_indicator(ticker, "SMALong")
+    #         s_was_over_l = context.get_indicator(ticker, "SMAShort", 1) > context.get_indicator(ticker, "SMALong", 1)
+    #         crossed_over = s_is_over_l and not s_was_over_l
+    #         crossed_under = not s_is_over_l and s_was_over_l
+    #
+    #         price = context.get_price(ticker, "Close")
+    #         size = self.sizer.calc_order_size(price, self.broker.equity, None)
+    #         if self.broker.get_position(ticker) is not None:
+    #             size *= 2
+    #
+    #         if crossed_over:
+    #             self.create_order(ticker, OrderDirection.BUY, OrderType.MARKET, size)
+    #         elif crossed_under:
+    #             self.create_order(ticker, OrderDirection.SELL, OrderType.MARKET, size)
+
+    # def pre_close(self, context: Context) -> None:
+    #     pass

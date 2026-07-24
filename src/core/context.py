@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -10,8 +10,6 @@ if TYPE_CHECKING:
 
     import pandas as pd
 
-    from core.enums import BarSubstep
-
 
 @dataclass
 class Context:
@@ -19,14 +17,15 @@ class Context:
     _indicator_data: dict[str, pd.DataFrame]
     bar_time: pd.Timestamp
     bar_pos: int
-    bar_substep: BarSubstep
+    # bar_substep: BarSubstep
+    current_ticker: str = field(default="", init=False)
 
-    def get_price(self, ticker: str, col: str, bars_back: int = 0) -> float:
-        df = self.price_data.get(ticker)
+    def get_price(self, col: str, ticker: str | None = None, bars_back: int = 0) -> float:
+        df = self.price_data.get(ticker or self.current_ticker)
         return self._get_value(df, col, bars_back)
 
-    def get_indicator(self, ticker: str, col: str, bars_back: int = 0) -> float:
-        df = self._indicator_data.get(ticker)
+    def get_indicator(self, col: str, ticker: str | None = None, bars_back: int = 0) -> float:
+        df = self._indicator_data.get(ticker or self.current_ticker)
         return self._get_value(df, col, bars_back)
 
     def get_tickers(self) -> KeysView[str]:
