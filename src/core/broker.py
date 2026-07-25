@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
-# from core.enums import OrderType
+from core.enums import OrderDirection, PositionSide
 from core.order import Order
 from core.position import Position
 
@@ -19,7 +19,6 @@ class Broker:
     equity: float
     _initial_equity: float
     _equity_history: list[tuple[pd.Timestamp, float]]
-    # _orders: dict[str, Order]
     _immediate_orders: list[Order]
     _conditional_orders: list[Order]
     _positions: dict[str, Position]
@@ -32,8 +31,6 @@ class Broker:
         self.equity = cash
         self._initial_equity = cash
         self._equity_history = []
-        # TODO: use a different data structure instead of dicts to support multiple orders per ticker
-        # self._orders = {}
         self._immediate_orders = []
         self._conditional_orders = []
         self._positions = {}
@@ -63,6 +60,7 @@ class Broker:
             cost = order.size * price
             if not self._can_open(order, cost):
                 continue
+            # TODO: check if ticker gets traded on current bar and only open a position if that is the case
             self._fill(order, price, context)
 
     def _handle_conditional_orders(self, context: Context) -> None:
@@ -76,11 +74,40 @@ class Broker:
         return True
 
     def _fill(self, order: Order, price: float, context: Context) -> None:
-        total_value = order.size * price
-        self._cash -= order.direction.sign() * total_value
-        position = Position.from_order(order, price, context.bar_time, context.bar_pos)
-        self._positions[order.ticker] = position
-        self.opened_positions_counter += 1
+        self._cash -= order.direction.sign() * order.size * price
+
+        existing = self._positions.get(order.ticker)
+
+        if existing is None:
+            self._positions[order.ticker] = Position.from_order(order, price, context.bar_time, context.bar_pos)
+            self.opened_positions_counter += 1
+            return
+
+        same_side = existing.side.sign() == order.direction.sign()
+
+        if same_side:
+            existing.size += order.size
+        elif order.size < existing.size:
+            existing.size -= order.size
+        elif order.size == existing.size:
+            del self._positions[order.ticker]
+            self.closed_positions_counter += 1
+        else:
+            remainder = order.size - existing.size
+            del self._positions[order.ticker]
+            self.closed_positions_counter += 1
+
+            flip_side = PositionSide.LONG if order.direction == OrderDirection.BUY else PositionSide.SHORT
+            flip_pos = Position(
+                ticker=order.ticker,
+                side=flip_side,
+                size=remainder,
+                entry_price=price,
+                entry_bar_time=context.bar_time,
+                entry_bar_pos=context.bar_pos,
+            )
+            self._positions[order.ticker] = flip_pos
+            self.opened_positions_counter += 1
 
     def _update_equity(self, context: Context) -> None:
         # TODO: replace direct access to context.price_data with a method (e.g. get_price_asof()) so price_data can be
@@ -93,7 +120,7 @@ class Broker:
                     for col in context.price_data[ticker].columns
                 }
             )
-            for ticker in self._get_open_tickers()
+            for ticker in self._positions
         }
 
         equity = self._cash
@@ -104,10 +131,6 @@ class Broker:
         if not self._equity_history:
             self._equity_history.append((context.bar_time, self._initial_equity))
         self._equity_history.append((context.bar_time, equity))
-
-    def _get_open_tickers(self) -> set[str]:
-        # return set(self._orders.keys()) | set(self._positions.keys())
-        return set(self._positions.keys())
 
     # def _update_orders(self, context: Context) -> None:
     #     executed_orders = []

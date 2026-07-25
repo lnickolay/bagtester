@@ -27,29 +27,15 @@ class Engine:
 
         indicator_data = strategy.initialize(price_data)
 
-        # for bar_pos, bar_time in enumerate(bar_times, start=1):
-        #     context = Context(price_data, indicator_data, bar_time, bar_pos, BarSubstep.OPEN)
-        #     strategy.pre_open(context)
-        #     self.broker.update(context)
-        #
-        #     context = Context(price_data, indicator_data, bar_time, bar_pos, BarSubstep.CLOSE)
-        #     strategy.pre_close(context)
-        #     self.broker.update(context)
-        #
-        #     if bar_pos % 100 == 0:
-        #         print(f"Progress: {bar_pos}/{len(bar_times)} trading days simulated.")
-
-        context = Context(price_data, indicator_data, bar_times[0], 0)
+        # TODO: context init with dummy bar_time and bar_pos is awkward, look for cleaner solution
+        context = Context(price_data, indicator_data, bar_times[0], 1)
 
         for bar_pos, bar_time in enumerate(bar_times, start=1):
             context.bar_time = bar_time
             context.bar_pos = bar_pos
 
             self.broker.update(context)
-
-            for ticker in price_data:
-                context.current_ticker = ticker
-                strategy.process_ticker(context)
+            strategy.process(context)
 
             if bar_pos % 100 == 0:
                 print(f"Progress: {bar_pos}/{len(bar_times)} trading days simulated.")

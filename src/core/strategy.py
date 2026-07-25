@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from core.enums import OrderDirection, OrderType
+from core.enums import OrderDirection, OrderType, PositionSide
 from core.order import Order
 
 if TYPE_CHECKING:
@@ -18,56 +18,49 @@ class Strategy(ABC):
 
     broker: Broker
     sizer: Sizer
+    _context: Context
+    _current_ticker: str
 
     def __init__(self, broker: Broker) -> None:
         self.broker = broker
 
-    # TODO: check if ticker can be made implicit
-    # TODO: concrete strategy should not have to call self.sizer manually
-    def buy(self, size: float, ticker: str) -> None:
-        order = Order(ticker=ticker, direction=OrderDirection.BUY, order_type=OrderType.MARKET, size=size)
+    def buy(self, size: float | None = None, tp_price: float | None = None, sl_price: float | None = None) -> None:
+        if size is None:
+            size = self.sizer.calc_order_size(self.get_price("Close"), self.broker.equity, sl_price)
+        order = Order(self._current_ticker, OrderDirection.BUY, OrderType.MARKET, size)
         self.broker.submit_order(order)
 
-    def sell(self, size: float, ticker: str) -> None:
-        order = Order(ticker=ticker, direction=OrderDirection.SELL, order_type=OrderType.MARKET, size=size)
+    def sell(self, size: float | None = None, tp_price: float | None = None, sl_price: float | None = None) -> None:
+        if size is None:
+            size = self.sizer.calc_order_size(self.get_price("Close"), self.broker.equity, sl_price)
+        order = Order(self._current_ticker, OrderDirection.SELL, OrderType.MARKET, size)
         self.broker.submit_order(order)
 
-    def close(self, ticker: str) -> None:
-        pass
+    def close(self) -> None:
+        pos = self.broker.get_position(self._current_ticker)
+        if pos is None:
+            return
 
-    # def create_order(
-    #     self,
-    #     ticker: str,
-    #     direction: OrderDirection,
-    #     order_type: OrderType,
-    #     size: float,
-    #     stop_loss_specs: list[ExitRuleSpec] | None = None,
-    #     take_profit_specs: list[ExitRuleSpec] | None = None,
-    #     timed_exit_specs: list[ExitRuleSpec] | None = None,
-    # ) -> None:
-    #     order = Order(
-    #         ticker=ticker,
-    #         direction=direction,
-    #         order_type=order_type,
-    #         size=size,
-    #         stop_loss_specs=stop_loss_specs or [],
-    #         take_profit_specs=take_profit_specs or [],
-    #         timed_exit_specs=timed_exit_specs or [],
-    #     )
-    #     self.broker.submit_order(order)
+        direction = OrderDirection.BUY if pos.side == PositionSide.SHORT else OrderDirection.SELL
+        order = Order(self._current_ticker, direction, OrderType.MARKET, pos.size)
+        self.broker.submit_order(order)
+
+    def get_price(self, col: str, bars_back: int = 0) -> float:
+        return self._context.get_price(col, self._current_ticker, bars_back)
+
+    def get_indicator(self, col: str, bars_back: int = 0) -> float:
+        return self._context.get_indicator(col, self._current_ticker, bars_back)
+
+    def process(self, context: Context) -> None:
+        self._context = context
+        for ticker in context.price_data:
+            self._current_ticker = ticker
+            self.process_ticker()
 
     @abstractmethod
     def initialize(self, price_data: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
         pass
 
     @abstractmethod
-    def process_ticker(self, context: Context) -> None:
+    def process_ticker(self) -> None:
         pass
-
-    # @abstractmethod
-    # def pre_open(self, context: Context) -> None:
-    #     pass
-
-    # @abstractmethod
-    # def pre_close(self, context: Context) -> None:
-    #     pass
