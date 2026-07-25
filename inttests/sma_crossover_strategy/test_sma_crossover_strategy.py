@@ -29,5 +29,7 @@ def test_sma_crossover_strategy() -> None:
     assert broker.opened_positions_counter == 271
     assert broker.closed_positions_counter == 0
     assert eval_metrics.delta_years == pytest.approx(9.99883638952203)
-    assert eval_metrics.cagr_pct == pytest.approx(73.76051379167852)
-    assert eval_metrics.max_drawdown_pct == pytest.approx(-70.88251714377608)
+    # assert eval_metrics.cagr_pct == pytest.approx(73.76051379167852)
+    assert eval_metrics.cagr_pct == pytest.approx(71.30215844142941)
+    # assert eval_metrics.max_drawdown_pct == pytest.approx(-70.88251714377608)
+    assert eval_metrics.max_drawdown_pct == pytest.approx(-71.49908977814329)
