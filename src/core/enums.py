@@ -18,12 +18,12 @@ from enum import Enum, auto
 #     TIMED_EXIT = auto()
 
 
-class OrderDirection(Enum):
-    BUY = 1
-    SELL = -1
+# class OrderDirection(Enum):
+#     BUY = 1
+#     SELL = -1
 
-    def sign(self) -> int:
-        return self.value
+#     def sign(self) -> int:
+#         return self.value
 
 
 class OrderType(Enum):
@@ -31,9 +31,9 @@ class OrderType(Enum):
     LIMIT = auto()
 
 
-class PositionSide(Enum):
-    LONG = 1
-    SHORT = -1
+# class PositionSide(Enum):
+#     LONG = 1
+#     SHORT = -1
 
-    def sign(self) -> int:
-        return self.value
+#     def sign(self) -> int:
+#         return self.value

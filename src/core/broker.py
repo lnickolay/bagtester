@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from core.enums import OrderDirection, PositionSide
 from core.order import Order
 from core.position import Position
 
@@ -74,7 +73,7 @@ class Broker:
         return True
 
     def _fill(self, order: Order, price: float, context: Context) -> None:
-        self._cash -= order.direction.sign() * order.size * price
+        self._cash -= order.size * price
 
         existing = self._positions.get(order.ticker)
 
@@ -83,31 +82,26 @@ class Broker:
             self.opened_positions_counter += 1
             return
 
-        same_side = existing.side.sign() == order.direction.sign()
+        new_size = existing.size + order.size
 
-        if same_side:
-            existing.size += order.size
-        elif order.size < existing.size:
-            existing.size -= order.size
-        elif order.size == existing.size:
+        if new_size == 0:
             del self._positions[order.ticker]
             self.closed_positions_counter += 1
+        elif (existing.size > 0) == (new_size > 0):
+            existing.size = new_size
         else:
-            remainder = order.size - existing.size
             del self._positions[order.ticker]
             self.closed_positions_counter += 1
-
-            flip_side = PositionSide.LONG if order.direction == OrderDirection.BUY else PositionSide.SHORT
-            flip_pos = Position(
-                ticker=order.ticker,
-                side=flip_side,
-                size=remainder,
-                entry_price=price,
-                entry_bar_time=context.bar_time,
-                entry_bar_pos=context.bar_pos,
-            )
-            self._positions[order.ticker] = flip_pos
-            self.opened_positions_counter += 1
+            if new_size != 0:
+                flip_position = Position(
+                    ticker=order.ticker,
+                    size=new_size,
+                    entry_price=price,
+                    entry_bar_time=context.bar_time,
+                    entry_bar_pos=context.bar_pos,
+                )
+                self._positions[order.ticker] = flip_position
+                self.opened_positions_counter += 1
 
     def _update_equity(self, context: Context) -> None:
         # TODO: replace direct access to context.price_data with a method (e.g. get_price_asof()) so price_data can be
@@ -125,7 +119,7 @@ class Broker:
 
         equity = self._cash
         for ticker, position in self._positions.items():
-            equity += position.side.sign() * position.size * most_recent_prices[ticker]["Close"]
+            equity += position.size * most_recent_prices[ticker]["Close"]
         self.equity = equity
 
         if not self._equity_history:

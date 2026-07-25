@@ -29,3 +29,4 @@ bagtester is a simple backtesting engine for stock and crypto trading strategies
 - Never add imports or re-exports to `__init__.py`. Leave `__init__.py` empty.
 - Keep `_notes/` updated when discussing or working on topics related to the notes contained therein.
 - In notes and documentation, put all class/method/attribute names and code references in backticks (e.g. `_fill`, `Strategy.buy()`, `Order.size`). Method/function names get `()` suffix.
+- Output text that includes descriptive prose should be written as a full sentence ending with appropriate punctuation. Bare value dumps for debugging are exempt.
