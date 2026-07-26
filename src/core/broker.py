@@ -57,8 +57,8 @@ class Broker:
         self._immediate_orders.append(order)
 
     def get_equity_series(self) -> pd.Series:
-        bar_times, equities = zip(*self._equity_history)
-        return pd.Series(equities, index=bar_times)
+        bar_timeline, equities = zip(*self._equity_history)
+        return pd.Series(equities, index=bar_timeline)
 
     def get_position(self, ticker: str) -> Position | None:
         return self._positions.get(ticker)
@@ -103,7 +103,7 @@ class Broker:
         existing_position = self._positions.get(order.ticker)
 
         if existing_position is None:
-            self._positions[order.ticker] = Position.from_order(order, price, context.bar_time, context.bar_pos)
+            self._positions[order.ticker] = Position.from_order(order, price, context.bar_time, context.bar_num)
             self.opened_positions_counter += 1
             return
 
@@ -123,7 +123,7 @@ class Broker:
                     size=new_size,
                     entry_price=price,
                     entry_bar_time=context.bar_time,
-                    entry_bar_pos=context.bar_pos,
+                    entry_bar_num=context.bar_num,
                 )
                 self._positions[order.ticker] = flip_position
                 self.opened_positions_counter += 1
@@ -155,10 +155,7 @@ class Broker:
         equity = self._cash
         gross_exposure = 0.0
         for ticker, position in self._positions.items():
-            price = context.get_price(price_col, ticker)
-            if math.isnan(price):
-                # TODO: not correctly implemented yet, last available price should be used for calculation here instead
-                continue
+            price = context.get_price_ffill(price_col, ticker)
             value = position.size * price
             equity += value
             gross_exposure += abs(value)
@@ -229,7 +226,7 @@ class Broker:
     #     price = context.get_price(order.ticker, context.bar_substep.value)
     #     total_value = order.size * price
     #     self._cash -= order.direction.sign() * total_value
-    #     position = Position.from_order(order, price, context.bar_time, context.bar_pos)
+    #     position = Position.from_order(order, price, context.bar_time, context.bar_num)
     #     self._positions[order.ticker] = position
     #     self.opened_positions_counter += 1
     #
