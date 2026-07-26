@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import math
 import warnings
+from collections import defaultdict
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -14,7 +14,6 @@ if TYPE_CHECKING:
     from core.context import Context
 
 
-# TODO: properly handle case where price is NaN for ticker on current bar during order execution, equity calculation etc
 class Broker:
 
     _cash: float
@@ -73,31 +72,41 @@ class Broker:
             self._update_equity_and_gross_exposure(context, "Close")
 
     def _handle_immediate_orders(self, context: Context) -> None:
-        remaining = list(self._immediate_orders)
+        # NOTE: orders are grouped by ticker here so that only one margin check per ticker on the net result is needed
+        # NOTE: it should be kept in mind that this changes the execution order of the immediate orders
+        ticker_to_orders: dict[str, list[Order]] = defaultdict(list)
+        for order in self._immediate_orders:
+            ticker_to_orders[order.ticker].append(order)
         self._immediate_orders.clear()
-        for order in remaining:
-            price = context.get_price("Open", order.ticker)
-            if math.isnan(price) or not self._can_open(order, price, context):
-                continue
-            self._fill(order, price, context)
 
+        for ticker, orders in ticker_to_orders.items():
+            price = context.get_price("Open", ticker)
+            if pd.isna(price):
+                continue
+            net_size = sum(order.size for order in orders)
+            if self._passes_initial_margin(ticker, net_size, price):
+                for order in orders:
+                    self._fill(order, price, context)
+
+    # TODO
     def _handle_conditional_orders(self, context: Context) -> None:
         pass
 
-    def _calc_gross_delta(self, order: Order, price: float) -> float:
-        existing_position = self._positions.get(order.ticker)
+    def _calc_gross_delta(self, ticker: str, size: float, price: float) -> float:
+        existing_position = self._positions.get(ticker)
         existing_size = existing_position.size if existing_position is not None else 0.0
-        return price * (abs(existing_size + order.size) - abs(existing_size))
+        return price * (abs(existing_size + size) - abs(existing_size))
 
-    def _can_open(self, order: Order, price: float, context: Context) -> bool:
-        new_gross = self._gross_exposure + self._calc_gross_delta(order, price)
+    def _passes_initial_margin(self, ticker: str, size: float, price: float) -> bool:
+        new_gross = self._gross_exposure + self._calc_gross_delta(ticker, size, price)
         if new_gross > 0 and self.equity / new_gross < self._initial_margin:
-            warnings.warn("Order would breach initial margin, skipping.")
+            warnings.warn("MARGIN BREACH: Order exceeds initial margin. Rejected.")
             return False
-        return True
+        else:
+            return True
 
     def _fill(self, order: Order, price: float, context: Context) -> None:
-        self._gross_exposure += self._calc_gross_delta(order, price)
+        self._gross_exposure += self._calc_gross_delta(order.ticker, order.size, price)
         self._cash -= order.size * price
 
         existing_position = self._positions.get(order.ticker)
@@ -179,7 +188,7 @@ class Broker:
         )
         for ticker, position in list(self._positions.items()):
             price = context.get_price("Close", ticker)
-            if math.isnan(price):
+            if pd.isna(price):
                 continue
             self._fill(Order(ticker, OrderType.MARKET, -position.size), price, context)
             self._cash -= abs(position.size * price) * self._liquidation_fee
