@@ -24,6 +24,7 @@ bagtester is a simple backtesting engine for stock and crypto trading strategies
 - Only use read-only git commands (for example `git status` and `git diff`). Do not run any git command that changes the repository or working tree.
 - Always use Black formatting.
 - Add type annotations so the code is valid under `mypy --strict`.
+- Do not run tests or lint/style checks during development. The user will run these manually.
 - Follow Python underscore visibility: public API has no prefix, implementation details use single `_` prefix.
 - Never import a type at runtime if it is only used for type annotations. Put those imports under `if TYPE_CHECKING:`.
 - Never add imports or re-exports to `__init__.py`. Leave `__init__.py` empty.

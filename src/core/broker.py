@@ -104,6 +104,14 @@ class Broker:
                 continue
 
             order.status = OrderStatus.ACCEPTED
+            if order.valid_from_bars is not None:
+                order.valid_from_time = context.bar_timeline[
+                    min(context.bar_num + order.valid_from_bars, len(context.bar_timeline) - 1)
+                ]
+            if order.valid_until_bars is not None:
+                order.valid_until_time = context.bar_timeline[
+                    min(context.bar_num + order.valid_until_bars, len(context.bar_timeline) - 1)
+                ]
             if order.is_scheduled_at(context.bar_time):
                 self._scheduled_orders.append(order)
             elif order.order_type == OrderType.MARKET:
