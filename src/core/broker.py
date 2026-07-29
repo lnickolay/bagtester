@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from core.enums import OrderType
+from core.enums import OrderStatus, OrderType
 from core.order import Order
 from core.position import Position
 
@@ -21,39 +21,42 @@ class Broker:
     _initial_equity: float
     _equity_history: list[tuple[pd.Timestamp, float]]
     _gross_exposure: float
-    _immediate_orders: list[Order]
+
+    _submitted_orders: list[Order]
+    _scheduled_orders: list[Order]
+    _executable_orders: list[Order]
     _conditional_orders: list[Order]
     _positions: dict[str, Position]
+
     _initial_margin: float
     _maintenance_margin: float
     _liquidation_fee: float
+
     # TODO: track opened and closed positions etc differently
     opened_positions_counter: int
     closed_positions_counter: int
 
     def __init__(
-        self,
-        cash: float,
-        initial_margin: float = 1.0,
-        maintenance_margin: float = 0.0,
-        liquidation_fee: float = 0.0,
+        self, cash: float, initial_margin: float = 1.0, maintenance_margin: float = 0.0, liquidation_fee: float = 0.0
     ) -> None:
         self._cash = cash
         self.equity = cash
         self._initial_equity = cash
         self._equity_history = []
         self._gross_exposure = 0.0
-        self._immediate_orders = []
+
+        self._submitted_orders = []
+        self._scheduled_orders = []
+        self._executable_orders = []
         self._conditional_orders = []
         self._positions = {}
+
         self._initial_margin = initial_margin
         self._maintenance_margin = maintenance_margin
         self._liquidation_fee = liquidation_fee
+
         self.opened_positions_counter = 0
         self.closed_positions_counter = 0
-
-    def submit_order(self, order: Order) -> None:
-        self._immediate_orders.append(order)
 
     def get_equity_series(self) -> pd.Series:
         bar_timeline, equities = zip(*self._equity_history)
@@ -62,22 +65,77 @@ class Broker:
     def get_position(self, ticker: str) -> Position | None:
         return self._positions.get(ticker)
 
+    def submit_order(self, order: Order) -> None:
+        self._submitted_orders.append(order)
+
     def update(self, context: Context) -> None:
         self._update_equity_and_gross_exposure(context, "Open")
-        self._handle_immediate_orders(context)
+
+        self._handle_submitted_orders(context)
+        self._handle_scheduled_orders(context)
+        self._handle_executable_orders(context)
         self._handle_conditional_orders(context)
+
         self._update_equity_and_gross_exposure(context, "Close")
         if self._is_below_maintenance():
             self._liquidate(context)
             self._update_equity_and_gross_exposure(context, "Close")
 
-    def _handle_immediate_orders(self, context: Context) -> None:
-        # NOTE: orders are grouped by ticker here so that only one margin check per ticker on the net result is needed
-        # NOTE: it should be kept in mind that this changes the execution order of the immediate orders
+    def _update_equity_and_gross_exposure(self, context: Context, price_col: str) -> None:
+        equity = self._cash
+        gross_exposure = 0.0
+        for ticker, position in self._positions.items():
+            price = context.get_price_ffill(price_col, ticker)
+            value = position.size * price
+            equity += value
+            gross_exposure += abs(value)
+        self.equity = equity
+        self._gross_exposure = gross_exposure
+
+        if price_col == "Close":
+            if not self._equity_history:
+                self._equity_history.append((context.bar_time, self._initial_equity))
+            self._equity_history.append((context.bar_time, equity))
+
+    def _handle_submitted_orders(self, context: Context) -> None:
+        for order in self._submitted_orders:
+            if order.has_expired_at(context.bar_time):
+                order.status = OrderStatus.EXPIRED
+                continue
+
+            order.status = OrderStatus.ACCEPTED
+            if order.is_scheduled_at(context.bar_time):
+                self._scheduled_orders.append(order)
+            elif order.order_type == OrderType.MARKET:
+                self._executable_orders.append(order)
+            else:
+                self._conditional_orders.append(order)
+        self._submitted_orders.clear()
+
+    def _handle_scheduled_orders(self, context: Context) -> None:
+        # TODO: use binary heap instead or not worth it?
+        self._scheduled_orders.sort(key=lambda o: o.valid_from_time)  # type: ignore[arg-type]
+        remaining = []
+        for order in self._scheduled_orders:
+            if order.status != OrderStatus.ACCEPTED:
+                continue
+            if not order.is_scheduled_at(context.bar_time):
+                if order.order_type == OrderType.MARKET:
+                    self._executable_orders.append(order)
+                else:
+                    self._conditional_orders.append(order)
+            else:
+                remaining.append(order)
+        self._scheduled_orders = remaining
+
+    def _handle_executable_orders(self, context: Context) -> None:
+        # NOTE: orders are grouped by ticker here so that only one margin check per ticker on the net result is needed,
+        # this changes the execution order of the immediate orders
         ticker_to_orders: dict[str, list[Order]] = defaultdict(list)
-        for order in self._immediate_orders:
-            ticker_to_orders[order.ticker].append(order)
-        self._immediate_orders.clear()
+        for order in self._executable_orders:
+            if order.status == OrderStatus.ACCEPTED:
+                ticker_to_orders[order.ticker].append(order)
+        self._executable_orders.clear()
 
         for ticker, orders in ticker_to_orders.items():
             price = context.get_price("Open", ticker)
@@ -88,26 +146,68 @@ class Broker:
                 for order in orders:
                     self._fill(order, price, context)
 
-    # TODO
     def _handle_conditional_orders(self, context: Context) -> None:
-        pass
+        self._conditional_orders.sort(key=lambda o: o.role.value, reverse=True)
 
-    def _calc_gross_delta(self, ticker: str, size: float, price: float) -> float:
-        existing_position = self._positions.get(ticker)
-        existing_size = existing_position.size if existing_position is not None else 0.0
-        return price * (abs(existing_size + size) - abs(existing_size))
+        remaining = []
+        for order in self._conditional_orders:
+            if order.status != OrderStatus.ACCEPTED:
+                continue
+            if order.has_expired_at(context.bar_time):
+                order.status = OrderStatus.EXPIRED
+                continue
 
-    def _passes_initial_margin(self, ticker: str, size: float, price: float) -> bool:
-        new_gross = self._gross_exposure + self._calc_gross_delta(ticker, size, price)
-        if new_gross > 0 and self.equity / new_gross < self._initial_margin:
-            warnings.warn("MARGIN BREACH: Order exceeds initial margin. Rejected.")
-            return False
+            fill_price = self._determine_conditional_order_fill_price(order, context)
+            if fill_price is None:
+                remaining.append(order)
+            elif not self._passes_initial_margin(order.ticker, order.size, fill_price):
+                order.status = OrderStatus.REJECTED
+            else:
+                self._fill(order, fill_price, context)
+
+        self._conditional_orders = remaining
+
+    def _determine_conditional_order_fill_price(self, order: Order, context: Context) -> float | None:
+        if order.order_type == OrderType.LIMIT:
+            trigger_if_greq = order.size < 0.0
+            trigger_price = order.limit_price
+        elif order.order_type == OrderType.STOP:
+            trigger_if_greq = order.size > 0.0
+            trigger_price = order.stop_price
         else:
-            return True
+            return None
+
+        assert trigger_price is not None
+        open_price = context.get_price("Open", order.ticker)
+        # TODO: add Context helper method for checking if ticker traded on current bar
+        if pd.isna(open_price):
+            return None
+        high_price = context.get_price("High", order.ticker)
+        low_price = context.get_price("Low", order.ticker)
+        fill_price = None
+
+        if trigger_if_greq:
+            if open_price >= trigger_price:
+                fill_price = open_price
+            elif high_price >= trigger_price:
+                fill_price = trigger_price
+        else:
+            if open_price <= trigger_price:
+                fill_price = open_price
+            elif low_price <= trigger_price:
+                fill_price = trigger_price
+
+        return fill_price
 
     def _fill(self, order: Order, price: float, context: Context) -> None:
+        order.status = OrderStatus.FILLED
         self._gross_exposure += self._calc_gross_delta(order.ticker, order.size, price)
         self._cash -= order.size * price
+
+        for child in order.child_orders:
+            self.submit_order(child)
+
+        self._cancel_siblings(order)
 
         existing_position = self._positions.get(order.ticker)
 
@@ -137,6 +237,42 @@ class Broker:
                 self._positions[order.ticker] = flip_position
                 self.opened_positions_counter += 1
 
+    def _cancel_siblings(self, order: Order) -> None:
+        if order.parent_order is not None:
+            for sibling_order in order.parent_order.child_orders:
+                if sibling_order is not order and sibling_order.status == OrderStatus.ACCEPTED:
+                    sibling_order.status = OrderStatus.CANCELED
+
+    def _passes_initial_margin(self, ticker: str, size: float, price: float) -> bool:
+        new_gross = self._gross_exposure + self._calc_gross_delta(ticker, size, price)
+        if new_gross > 0 and self.equity / new_gross < self._initial_margin:
+            warnings.warn("MARGIN BREACH: Order exceeds initial margin. Rejected.")
+            return False
+        else:
+            return True
+
+    def _is_below_maintenance(self) -> bool:
+        return self._maintenance_margin > 0.0 and self.equity / self._gross_exposure < self._maintenance_margin
+
+    def _liquidate(self, context: Context) -> None:
+        warnings.warn(
+            f"LIQUIDATION at {context.bar_time.date()}: "
+            f"equity/gross {self.equity / self._gross_exposure:.4f} < maintenance"
+            f" margin {self._maintenance_margin:.4f}. "
+            "Force-closing all positions."
+        )
+        for ticker, position in list(self._positions.items()):
+            price = context.get_price("Close", ticker)
+            if pd.isna(price):
+                continue
+            self._fill(Order(ticker, OrderType.MARKET, -position.size), price, context)
+            self._cash -= abs(position.size * price) * self._liquidation_fee
+
+    def _calc_gross_delta(self, ticker: str, size: float, price: float) -> float:
+        existing_position = self._positions.get(ticker)
+        existing_size = existing_position.size if existing_position is not None else 0.0
+        return price * (abs(existing_size + size) - abs(existing_size))
+
     # def _update_equity(self, context: Context) -> None:
     #     # TODO: replace direct access to context.price_data with a method (e.g. get_price_asof()) so price_data can be
     #     # made internal
@@ -159,39 +295,6 @@ class Broker:
     #     if not self._equity_history:
     #         self._equity_history.append((context.bar_time, self._initial_equity))
     #     self._equity_history.append((context.bar_time, equity))
-
-    def _update_equity_and_gross_exposure(self, context: Context, price_col: str) -> None:
-        equity = self._cash
-        gross_exposure = 0.0
-        for ticker, position in self._positions.items():
-            price = context.get_price_ffill(price_col, ticker)
-            value = position.size * price
-            equity += value
-            gross_exposure += abs(value)
-        self.equity = equity
-        self._gross_exposure = gross_exposure
-
-        if price_col == "Close":
-            if not self._equity_history:
-                self._equity_history.append((context.bar_time, self._initial_equity))
-            self._equity_history.append((context.bar_time, equity))
-
-    def _is_below_maintenance(self) -> bool:
-        return self._maintenance_margin > 0.0 and self.equity / self._gross_exposure < self._maintenance_margin
-
-    def _liquidate(self, context: Context) -> None:
-        warnings.warn(
-            f"LIQUIDATION at {context.bar_time.date()}: "
-            f"equity/gross {self.equity / self._gross_exposure:.4f} < maintenance"
-            f" margin {self._maintenance_margin:.4f}. "
-            "Force-closing all positions."
-        )
-        for ticker, position in list(self._positions.items()):
-            price = context.get_price("Close", ticker)
-            if pd.isna(price):
-                continue
-            self._fill(Order(ticker, OrderType.MARKET, -position.size), price, context)
-            self._cash -= abs(position.size * price) * self._liquidation_fee
 
     # def _update_orders(self, context: Context) -> None:
     #     executed_orders = []

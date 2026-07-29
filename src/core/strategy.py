@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from core.enums import OrderType
+from core.enums import OrderRole, OrderType
 from core.order import Order
 
 if TYPE_CHECKING:
@@ -30,9 +30,7 @@ class Strategy(ABC):
             raise ValueError(f"SL {sl_price} must be below entry {price} for BUY.")
         if tp_price is not None and tp_price <= price:
             raise ValueError(f"TP {tp_price} must be above entry {price} for BUY.")
-        if size is None:
-            size = self.sizer.calc_order_size(price, self.broker.equity, sl_price)
-        self.broker.submit_order(Order(self._current_ticker, OrderType.MARKET, size))
+        self._place_order(size, tp_price, sl_price, sign=1)
 
     def sell(self, size: float | None = None, tp_price: float | None = None, sl_price: float | None = None) -> None:
         price = self.get_price("Close")
@@ -40,9 +38,38 @@ class Strategy(ABC):
             raise ValueError(f"SL {sl_price} must be above entry {price} for SELL.")
         if tp_price is not None and tp_price >= price:
             raise ValueError(f"TP {tp_price} must be below entry {price} for SELL.")
+        self._place_order(size, tp_price, sl_price, sign=-1)
+
+    def _place_order(self, size: float | None, tp_price: float | None, sl_price: float | None, sign: int) -> None:
+        price = self.get_price("Close")
         if size is None:
             size = self.sizer.calc_order_size(price, self.broker.equity, sl_price)
-        self.broker.submit_order(Order(self._current_ticker, OrderType.MARKET, -size))
+        signed_size = sign * size
+        order = Order(self._current_ticker, OrderType.MARKET, signed_size)
+
+        if tp_price is not None:
+            order.child_orders.append(
+                Order(
+                    self._current_ticker,
+                    OrderType.LIMIT,
+                    -signed_size,
+                    role=OrderRole.TAKE_PROFIT,
+                    limit_price=tp_price,
+                    parent_order=order,
+                )
+            )
+        if sl_price is not None:
+            order.child_orders.append(
+                Order(
+                    self._current_ticker,
+                    OrderType.STOP,
+                    -signed_size,
+                    role=OrderRole.STOP_LOSS,
+                    stop_price=sl_price,
+                    parent_order=order,
+                )
+            )
+        self.broker.submit_order(order)
 
     def close(self) -> None:
         pos = self.broker.get_position(self._current_ticker)
