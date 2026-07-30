@@ -16,8 +16,8 @@ class Engine:
 
     broker: Broker
 
-    def __init__(self, initial_cash: float = 10000.0) -> None:
-        self.broker = Broker(initial_cash)
+    def __init__(self, broker: Broker | None = None) -> None:
+        self.broker = broker or Broker()
 
     def run_strategy(self, strategy: Strategy, price_data: dict[str, pd.DataFrame]) -> pd.Series:
         simulation_timer_start = time.perf_counter()

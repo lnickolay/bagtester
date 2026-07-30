@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import warnings
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
@@ -37,23 +36,27 @@ class Broker:
     closed_positions_counter: int
 
     def __init__(
-        self, cash: float, initial_margin: float = 1.0, maintenance_margin: float = 0.0, liquidation_fee: float = 0.0
+        self,
+        initial_cash: float = 10000.0,
+        initial_margin: float = 1.0,
+        maintenance_margin: float = 0.0,
+        liquidation_fee: float = 0.0,
     ) -> None:
-        self._cash = cash
-        self.equity = cash
-        self._initial_equity = cash
+        self._cash = initial_cash
+        self.equity = initial_cash
+        self._initial_equity = initial_cash
         self._equity_history = []
         self._gross_exposure = 0.0
+
+        self._initial_margin = initial_margin
+        self._maintenance_margin = maintenance_margin
+        self._liquidation_fee = liquidation_fee
 
         self._submitted_orders = []
         self._scheduled_orders = []
         self._executable_orders = []
         self._conditional_orders = []
         self._positions = {}
-
-        self._initial_margin = initial_margin
-        self._maintenance_margin = maintenance_margin
-        self._liquidation_fee = liquidation_fee
 
         self.opened_positions_counter = 0
         self.closed_positions_counter = 0
@@ -74,6 +77,9 @@ class Broker:
         self._handle_submitted_orders(context)
         self._handle_scheduled_orders(context)
         self._handle_executable_orders(context)
+        # second _handle_submitted_orders() call here so that child TP/SL limit orders of parent orders triggered at
+        # open can get triggered on the same bar
+        self._handle_submitted_orders(context)
         self._handle_conditional_orders(context)
 
         self._update_equity_and_gross_exposure(context, "Close")
@@ -252,23 +258,18 @@ class Broker:
                     sibling_order.status = OrderStatus.CANCELED
 
     def _passes_initial_margin(self, ticker: str, size: float, price: float) -> bool:
-        new_gross = self._gross_exposure + self._calc_gross_delta(ticker, size, price)
-        if new_gross > 0 and self.equity / new_gross < self._initial_margin:
-            warnings.warn("MARGIN BREACH: Order exceeds initial margin. Rejected.")
+        new_gross_exposure = self._gross_exposure + self._calc_gross_delta(ticker, size, price)
+        if self.equity < self._initial_margin * new_gross_exposure:
+            print("MARGIN BREACH: Order exceeds initial margin requirement. Rejected.")
             return False
         else:
             return True
 
     def _is_below_maintenance(self) -> bool:
-        return self._maintenance_margin > 0.0 and self.equity / self._gross_exposure < self._maintenance_margin
+        return self._maintenance_margin > 0.0 and self.equity < self._maintenance_margin * self._gross_exposure
 
     def _liquidate(self, context: Context) -> None:
-        warnings.warn(
-            f"LIQUIDATION at {context.bar_time.date()}: "
-            f"equity/gross {self.equity / self._gross_exposure:.4f} < maintenance"
-            f" margin {self._maintenance_margin:.4f}. "
-            "Force-closing all positions."
-        )
+        print("LIQUIDATION: Equity below maintenance margin requirement. Force-closing all positions.")
         for ticker, position in list(self._positions.items()):
             price = context.get_price("Close", ticker)
             if pd.isna(price):
