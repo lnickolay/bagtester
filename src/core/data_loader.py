@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 
 import pandas as pd
 
-from paths import included_tickers_file, ohclv_dir
+from paths import ohclv_dir, ticker_data_dir
 
 
 class DataLoader(ABC):
@@ -74,6 +74,13 @@ class YFinanceDataLoader(DataLoader):
 
         return price_data
 
-    def get_included_tickers(self) -> list[str]:
-        with open(included_tickers_file(self._source)) as f:
-            return [line.strip() for line in f if line.strip()]
+    def get_included_tickers(self, include_blacklisted: bool = False) -> list[str]:
+        included_tickers = (ticker_data_dir(self._source) / "included_tickers.txt").read_text().splitlines()
+
+        if not include_blacklisted:
+            blacklisted_file = ticker_data_dir(self._source) / "blacklisted_tickers.txt"
+            if blacklisted_file.exists():
+                blacklisted_tickers = set(blacklisted_file.read_text().splitlines())
+                return [ticker for ticker in included_tickers if ticker not in blacklisted_tickers]
+
+        return included_tickers
