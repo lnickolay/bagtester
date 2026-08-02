@@ -78,7 +78,7 @@ class Context:
         target_time = self.bar_timeline[target_pos]
 
         if target_time in df.index:
-            val = float(df.loc[target_time, col])  # type: ignore[assignment]
+            val = float(df.loc[target_time, col])  # type: ignore[arg-type]
         else:
             val = np.nan
 

@@ -146,7 +146,7 @@ class Broker:
         self._submitted_orders.clear()
 
     def _handle_scheduled_orders(self, context: Context) -> None:
-        self._scheduled_orders.sort(key=lambda order: order.valid_from_time)  # type: ignore[arg-type]
+        self._scheduled_orders.sort(key=lambda order: order.valid_from_time)  # type: ignore[arg-type, return-value]
         remaining = []
         for order in self._scheduled_orders:
             if order.status != OrderStatus.ACCEPTED:
