@@ -31,9 +31,11 @@ class Broker:
 
     _maker_fee: float
     _taker_fee: float
+    _liquidation_fee: float
     _market_order_slippage: float
     _stop_order_slippage: float
-    _liquidation_fee: float
+    _margin_interest_rate: float
+    _asset_borrow_rate: float
 
     # TODO: track opened and closed positions etc differently
     opened_positions_counter: int
@@ -47,14 +49,18 @@ class Broker:
         commission: float = 0.0,
         maker_fee: float = 0.0,
         taker_fee: float = 0.0,
+        liquidation_fee: float = 0.0,
         market_order_slippage: float = 0.0,
         stop_order_slippage: float = 0.0,
-        liquidation_fee: float = 0.0,
+        margin_interest_rate: float = 0.0,
+        asset_borrow_rate: float = 0.0,
     ) -> None:
         self._cash = initial_cash
         self.equity = initial_cash
         self._initial_equity = initial_cash
         self._equity_history = []
+        self._long_exposure = 0.0
+        self._short_exposure = 0.0
         self._gross_exposure = 0.0
 
         self._initial_margin = initial_margin
@@ -67,9 +73,11 @@ class Broker:
         else:
             self._maker_fee = maker_fee
             self._taker_fee = taker_fee
+        self._liquidation_fee = liquidation_fee
         self._market_order_slippage = market_order_slippage
         self._stop_order_slippage = stop_order_slippage
-        self._liquidation_fee = liquidation_fee
+        self._margin_interest_rate = margin_interest_rate
+        self._asset_borrow_rate = asset_borrow_rate
 
         self._submitted_orders = []
         self._scheduled_orders = []
@@ -91,7 +99,8 @@ class Broker:
         self._submitted_orders.append(order)
 
     def update(self, context: Context) -> None:
-        self._update_equity_and_gross_exposure(context, "Open")
+        self._update_equity_and_exposure(context, "Open")
+        margin_interest_cost, asset_borrow_cost = self._apply_financing_costs(context)
 
         self._handle_submitted_orders(context)
         self._handle_scheduled_orders(context)
@@ -101,26 +110,44 @@ class Broker:
         self._handle_submitted_orders(context)
         self._handle_conditional_orders(context)
 
-        self._update_equity_and_gross_exposure(context, "Close")
+        self._update_equity_and_exposure(context, "Close")
         if self._is_below_maintenance():
             self._liquidate(context)
-            self._update_equity_and_gross_exposure(context, "Close")
 
-    def _update_equity_and_gross_exposure(self, context: Context, price_col: str) -> None:
-        equity = self._cash
-        gross_exposure = 0.0
+    def _update_equity_and_exposure(self, context: Context, price_col: str) -> None:
+        new_long_exposure = new_short_exposure = 0.0
         for ticker, position in self._positions.items():
             price = context.get_price_ffill(price_col, ticker)
-            value = position.size * price
-            equity += value
-            gross_exposure += abs(value)
-        self.equity = equity
-        self._gross_exposure = gross_exposure
+            if position.size > 0.0:
+                new_long_exposure += position.size * price
+            else:
+                new_short_exposure += abs(position.size * price)
+
+        self.equity = self._cash + new_long_exposure - new_short_exposure
+        self._long_exposure = new_long_exposure
+        self._short_exposure = new_short_exposure
+        self._gross_exposure = new_long_exposure + new_short_exposure
 
         if price_col == "Close":
             if not self._equity_history:
                 self._equity_history.append((context.bar_time, self._initial_equity))
-            self._equity_history.append((context.bar_time, equity))
+            self._equity_history.append((context.bar_time, self.equity))
+
+    def _apply_financing_costs(self, context: Context) -> tuple[float, float]:
+        if context.bar_num == 0:
+            return 0.0, 0.0
+
+        prev_bar_time = context.bar_timeline[context.bar_num - 1]
+        elapsed_years = (context.bar_time - prev_bar_time).total_seconds() / (365 * 86400)
+        borrowed_cash = max(0.0, self._long_exposure - self.equity)
+
+        margin_interest_cost = borrowed_cash * self._margin_interest_rate * elapsed_years
+        asset_borrow_cost = self._short_exposure * self._asset_borrow_rate * elapsed_years
+
+        total_cost = margin_interest_cost + asset_borrow_cost
+        self._cash -= total_cost
+        self.equity -= total_cost
+        return margin_interest_cost, asset_borrow_cost
 
     def _handle_submitted_orders(self, context: Context) -> None:
         for order in self._submitted_orders:
@@ -175,7 +202,7 @@ class Broker:
         self._executable_orders.clear()
 
     def _handle_conditional_orders(self, context: Context) -> None:
-        self._conditional_orders.sort(key=lambda o: o.role.value, reverse=True)
+        self._conditional_orders.sort(key=lambda order: order.role.value, reverse=True)
         remaining = []
         for order in self._conditional_orders:
             if order.status != OrderStatus.ACCEPTED:
@@ -190,6 +217,17 @@ class Broker:
             else:
                 remaining.append(order)
         self._conditional_orders = remaining
+
+    def _is_below_maintenance(self) -> bool:
+        return self._maintenance_margin > 0.0 and self.equity < self._maintenance_margin * self._gross_exposure
+
+    def _liquidate(self, context: Context) -> None:
+        print("LIQUIDATION: Equity below maintenance margin requirement. Force-closing all positions.")
+        for ticker, position in list(self._positions.items()):
+            price = context.get_price("Close", ticker)
+            if not pd.isna(price):
+                liquidation_order = Order(ticker, OrderType.MARKET, -position.size)
+                self._try_execution(liquidation_order, price, context, is_liquidation=True)
 
     def _determine_conditional_order_fill_price(self, order: Order, context: Context) -> float | None:
         if order.order_type == OrderType.LIMIT:
@@ -253,11 +291,14 @@ class Broker:
             self.submit_order(child)
         self._cancel_siblings(order)
 
+        new_size = existing_size + order.size
+
         self._cash -= order.size * fill_price + fee_cost
         self.equity -= fee_cost
         self._gross_exposure += gross_exposure_delta
+        self._long_exposure += max(new_size * fill_price, 0.0) - max(existing_size * fill_price, 0.0)
+        self._short_exposure = self._gross_exposure - self._long_exposure
 
-        new_size = existing_size + order.size
         if existing_position is None:
             self._positions[order.ticker] = Position(
                 ticker=order.ticker,
@@ -288,24 +329,13 @@ class Broker:
             )
             self.opened_positions_counter += 1
 
-    def _calc_gross_size_delta(self, order: Order) -> float:
-        existing_position = self._positions.get(order.ticker)
-        existing_size = existing_position.size if existing_position is not None else 0.0
-        return abs(existing_size + order.size) - abs(existing_size)
-
     def _cancel_siblings(self, order: Order) -> None:
         if order.parent_order is not None:
             for sibling_order in order.parent_order.child_orders:
                 if sibling_order is not order and sibling_order.status == OrderStatus.ACCEPTED:
                     sibling_order.status = OrderStatus.CANCELED
 
-    def _is_below_maintenance(self) -> bool:
-        return self._maintenance_margin > 0.0 and self.equity < self._maintenance_margin * self._gross_exposure
-
-    def _liquidate(self, context: Context) -> None:
-        print("LIQUIDATION: Equity below maintenance margin requirement. Force-closing all positions.")
-        for ticker, position in list(self._positions.items()):
-            price = context.get_price("Close", ticker)
-            if not pd.isna(price):
-                liquidation_order = Order(ticker, OrderType.MARKET, -position.size)
-                self._try_execution(liquidation_order, price, context, is_liquidation=True)
+    def _calc_gross_size_delta(self, order: Order) -> float:
+        existing_position = self._positions.get(order.ticker)
+        existing_size = existing_position.size if existing_position is not None else 0.0
+        return abs(existing_size + order.size) - abs(existing_size)
