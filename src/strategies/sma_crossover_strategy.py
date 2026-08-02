@@ -4,14 +4,11 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from core.enums import OrderDirection
-from core.order import OrderType
 from core.sizer import EquityRatioSizer
 from core.strategy import Strategy
 
 if TYPE_CHECKING:
     from core.broker import Broker
-    from core.context import Context
 
 
 class SMACrossoverStrategy(Strategy):
@@ -44,23 +41,15 @@ class SMACrossoverStrategy(Strategy):
             )
         return sma_data
 
-    # TODO
-    def pre_open(self, context: Context) -> None:
-        for ticker in context.get_tickers():
-            s_is_over_l = context.get_indicator(ticker, "SMAShort") > context.get_indicator(ticker, "SMALong")
-            s_was_over_l = context.get_indicator(ticker, "SMAShort", 1) > context.get_indicator(ticker, "SMALong", 1)
-            crossed_over = s_is_over_l and not s_was_over_l
-            crossed_under = not s_is_over_l and s_was_over_l
+    def process_ticker(self) -> None:
+        s_is_over_l = self.get_indicator("SMAShort") > self.get_indicator("SMALong")
+        s_was_over_l = self.get_indicator("SMAShort", bars_back=1) > self.get_indicator("SMALong", bars_back=1)
+        crossed_over = s_is_over_l and not s_was_over_l
+        crossed_under = not s_is_over_l and s_was_over_l
 
-            price = context.get_price(ticker, "Close")
-            size = self.sizer.calc_order_size(price, self.broker.equity, None)
-            if self.broker.get_position(ticker) is not None:
-                size *= 2
-
-            if crossed_over:
-                self.create_order(ticker, OrderDirection.BUY, OrderType.MARKET, size)
-            elif crossed_under:
-                self.create_order(ticker, OrderDirection.SELL, OrderType.MARKET, size)
-
-    def pre_close(self, context: Context) -> None:
-        pass
+        if crossed_over:
+            self.close()
+            self.buy()
+        elif crossed_under:
+            self.close()
+            self.sell()

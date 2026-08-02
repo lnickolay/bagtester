@@ -49,7 +49,7 @@ def _download_stock_data_yfinance(tickers: list[str]) -> None:
         + f"finance. Stock data for {len(tickers) - len(downloaded_tickers)} could not be found."
     )
 
-    with open(paths.included_tickers_file("yfinance"), "w", encoding="utf-8") as f:
+    with open(paths.ticker_data_dir("yfinance") / "included_tickers.txt", "w", encoding="utf-8") as f:
         f.write("\n".join(downloaded_tickers) + "\n")
 
 

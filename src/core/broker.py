@@ -4,15 +4,12 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from core.condition import PriceCondition
-from core.enums import BarSubstep, OrderType
+from core.enums import OrderStatus, OrderType
 from core.order import Order
 from core.position import Position
-from debug_settings import PRINT_DEBUG_OUTPUT
 
 if TYPE_CHECKING:
     from core.context import Context
-    from core.exit_rule import ExitRule
 
 
 class Broker:
@@ -21,147 +18,324 @@ class Broker:
     equity: float
     _initial_equity: float
     _equity_history: list[tuple[pd.Timestamp, float]]
-    _orders: dict[str, Order]
+    _gross_exposure: float
+
+    _submitted_orders: list[Order]
+    _scheduled_orders: list[Order]
+    _executable_orders: list[Order]
+    _conditional_orders: list[Order]
     _positions: dict[str, Position]
+
+    _initial_margin: float
+    _maintenance_margin: float
+
+    _maker_fee: float
+    _taker_fee: float
+    _liquidation_fee: float
+    _market_order_slippage: float
+    _stop_order_slippage: float
+    _margin_interest_rate: float
+    _asset_borrow_rate: float
+
     # TODO: track opened and closed positions etc differently
     opened_positions_counter: int
     closed_positions_counter: int
 
-    def __init__(self, cash: float) -> None:
-        self._cash = cash
-        self.equity = cash
-        self._initial_equity = cash
+    def __init__(
+        self,
+        initial_cash: float = 10000.0,
+        initial_margin: float = 1.0,
+        maintenance_margin: float = 0.0,
+        commission: float = 0.0,
+        maker_fee: float = 0.0,
+        taker_fee: float = 0.0,
+        liquidation_fee: float = 0.0,
+        market_order_slippage: float = 0.0,
+        stop_order_slippage: float = 0.0,
+        margin_interest_rate: float = 0.0,
+        asset_borrow_rate: float = 0.0,
+    ) -> None:
+        self._cash = initial_cash
+        self.equity = initial_cash
+        self._initial_equity = initial_cash
         self._equity_history = []
-        # TODO: use a different data structure instead of dicts to support multiple orders per ticker
-        self._orders = {}
+        self._long_exposure = 0.0
+        self._short_exposure = 0.0
+        self._gross_exposure = 0.0
+
+        self._initial_margin = initial_margin
+        self._maintenance_margin = maintenance_margin
+
+        if commission != 0.0:
+            if maker_fee != 0.0 or taker_fee != 0.0:
+                raise ValueError("Either commissions or maker/taker should be specified, not both.")
+            self._maker_fee = self._taker_fee = commission
+        else:
+            self._maker_fee = maker_fee
+            self._taker_fee = taker_fee
+        self._liquidation_fee = liquidation_fee
+        self._market_order_slippage = market_order_slippage
+        self._stop_order_slippage = stop_order_slippage
+        self._margin_interest_rate = margin_interest_rate
+        self._asset_borrow_rate = asset_borrow_rate
+
+        self._submitted_orders = []
+        self._scheduled_orders = []
+        self._executable_orders = []
+        self._conditional_orders = []
         self._positions = {}
+
         self.opened_positions_counter = 0
         self.closed_positions_counter = 0
 
-    def submit_order(self, order: Order) -> None:
-        self._orders[order.ticker] = order
-
     def get_equity_series(self) -> pd.Series:
-        bar_times, equities = zip(*self._equity_history)
-        return pd.Series(equities, index=bar_times)
+        bar_timeline, equities = zip(*self._equity_history)
+        return pd.Series(equities, index=bar_timeline)
 
     def get_position(self, ticker: str) -> Position | None:
         return self._positions.get(ticker)
 
+    def submit_order(self, order: Order) -> None:
+        self._submitted_orders.append(order)
+
     def update(self, context: Context) -> None:
-        self._update_orders(context)
-        self._update_positions(context)
-        self._update_equity(context)
+        self._update_equity_and_exposure(context, "Open")
+        margin_interest_cost, asset_borrow_cost = self._apply_financing_costs(context)
 
-    def _update_orders(self, context: Context) -> None:
-        executed_orders = []
+        self._handle_submitted_orders(context)
+        self._handle_scheduled_orders(context)
+        self._handle_executable_orders(context)
+        # second _handle_submitted_orders() call here so that child TP/SL limit orders of parent orders triggered at
+        # open can get triggered on the same bar
+        self._handle_submitted_orders(context)
+        self._handle_conditional_orders(context)
 
-        for ticker, order in self._orders.items():
-            if order.order_type == OrderType.MARKET:
-                # TODO: check if ticker gets traded on current bar and only open a position if that is the case
-                self._open_position(order, context)
-                executed_orders.append(order)
-            elif order.order_type == OrderType.LIMIT:
-                # TODO: implement market orders
-                pass
+        self._update_equity_and_exposure(context, "Close")
+        if self._is_below_maintenance():
+            self._liquidate(context)
 
-        for order in executed_orders:
-            del self._orders[order.ticker]
-
-    def _update_positions(self, context: Context) -> None:
-        closed_positions = []
-
+    def _update_equity_and_exposure(self, context: Context, price_col: str) -> None:
+        new_long_exposure = new_short_exposure = 0.0
         for ticker, position in self._positions.items():
-            ordered_exit_rules = position.stop_loss_rules + position.take_profit_rules + position.timed_exit_rules
+            price = context.get_price_ffill(price_col, ticker)
+            if position.size > 0.0:
+                new_long_exposure += position.size * price
+            else:
+                new_short_exposure += abs(position.size * price)
 
-            for exit_rule in ordered_exit_rules:
-                if exit_rule.condition.evaluate(context, ticker):
+        self.equity = self._cash + new_long_exposure - new_short_exposure
+        self._long_exposure = new_long_exposure
+        self._short_exposure = new_short_exposure
+        self._gross_exposure = new_long_exposure + new_short_exposure
 
-                    self._close_partial_position(position, exit_rule, context)
-                    if position.size <= 0:
-                        closed_positions.append(position)
-                        self.closed_positions_counter += 1
-                        break
-
-        for position in closed_positions:
-            del self._positions[position.ticker]
-
-    def _update_equity(self, context: Context) -> None:
-        # TODO: replace direct access to context.price_data with a method (e.g. get_price_asof()) so price_data can be
-        # made internal
-        most_recent_prices = {
-            ticker: pd.Series(
-                {
-                    # asof() gets the last non-NaN price
-                    col: context.price_data[ticker][col].asof(context.bar_time)
-                    for col in context.price_data[ticker].columns
-                }
-            )
-            for ticker in self._get_open_tickers()
-        }
-
-        equity = self._cash
-        for ticker, position in self._positions.items():
-            equity += position.side.sign() * position.size * most_recent_prices[ticker][context.bar_substep.value]
-        self.equity = equity
-
-        if context.bar_substep == BarSubstep.CLOSE:
+        if price_col == "Close":
             if not self._equity_history:
                 self._equity_history.append((context.bar_time, self._initial_equity))
-            self._equity_history.append((context.bar_time, equity))
+            self._equity_history.append((context.bar_time, self.equity))
 
-    def _get_open_tickers(self) -> set[str]:
-        return set(self._orders.keys()) | set(self._positions.keys())
+    def _apply_financing_costs(self, context: Context) -> tuple[float, float]:
+        if context.bar_num == 0:
+            return 0.0, 0.0
 
-    # TODO: check cash sufficiency before opening a position (currently positions can exceed available cash)
-    # def can_open(self, order: Order, price: float) -> bool:
-    #     return self._cash >= order.size * price
+        prev_bar_time = context.bar_timeline[context.bar_num - 1]
+        elapsed_years = (context.bar_time - prev_bar_time).total_seconds() / (365 * 86400)
+        borrowed_cash = max(0.0, self._long_exposure - self.equity)
 
-    # TODO: implement position scaling by making it possible to execute multiple orders on the same ticker
-    def _open_position(self, order: Order, context: Context) -> Position:
-        price = context.get_price(order.ticker, context.bar_substep.value)
-        total_value = order.size * price
-        self._cash -= order.direction.sign() * total_value
-        position = Position.from_order(order, price, context.bar_time, context.bar_pos)
-        self._positions[order.ticker] = position
-        self.opened_positions_counter += 1
+        margin_interest_cost = borrowed_cash * self._margin_interest_rate * elapsed_years
+        asset_borrow_cost = self._short_exposure * self._asset_borrow_rate * elapsed_years
 
-        if PRINT_DEBUG_OUTPUT:
-            print(
-                f"{pd.Timestamp(context.bar_time).date()} - Opened new {position.side.name} position. "
-                + f"Ticker: {position.ticker}, Price {price:.2f}, Size: {order.size:.2f}, "
-                + f"Total value: {total_value:.2f}."
-            )
+        total_cost = margin_interest_cost + asset_borrow_cost
+        self._cash -= total_cost
+        self.equity -= total_cost
+        return margin_interest_cost, asset_borrow_cost
 
-        return position
+    def _handle_submitted_orders(self, context: Context) -> None:
+        for order in self._submitted_orders:
+            if order.has_expired_at(context.bar_time):
+                order.status = OrderStatus.EXPIRED
+                continue
 
-    def _close_partial_position(self, position: Position, exit_rule: ExitRule, context: Context) -> None:
-        if context.bar_substep == BarSubstep.OPEN:
-            price = context.get_price(position.ticker, "Open")
-        else:
-            # context.bar_substep == BarSubstep.CLOSE
-            if isinstance(exit_rule.condition, PriceCondition):
-                price = exit_rule.condition.get_target_value(context, position.ticker)
+            order.status = OrderStatus.ACCEPTED
+            if order.valid_from_bars is not None:
+                order.valid_from_time = context.bar_timeline[
+                    min(context.bar_num + order.valid_from_bars, len(context.bar_timeline) - 1)
+                ]
+            if order.valid_until_bars is not None:
+                order.valid_until_time = context.bar_timeline[
+                    min(context.bar_num + order.valid_until_bars, len(context.bar_timeline) - 1)
+                ]
+            if order.is_scheduled_at(context.bar_time):
+                self._scheduled_orders.append(order)
+            elif order.order_type == OrderType.MARKET:
+                self._executable_orders.append(order)
             else:
-                price = context.get_price(position.ticker, "Close")
+                self._conditional_orders.append(order)
+        self._submitted_orders.clear()
 
-        if exit_rule.size_pct < position.size_pct:
-            size_pct_to_close = exit_rule.size_pct
-            size_to_close = exit_rule.size_pct * position.initial_size
-            position.size -= size_to_close
-            position.size_pct -= size_pct_to_close
+    def _handle_scheduled_orders(self, context: Context) -> None:
+        self._scheduled_orders.sort(key=lambda order: order.valid_from_time)  # type: ignore[arg-type, return-value]
+        remaining = []
+        for order in self._scheduled_orders:
+            if order.status != OrderStatus.ACCEPTED:
+                continue
+
+            if not order.is_scheduled_at(context.bar_time):
+                if order.order_type == OrderType.MARKET:
+                    self._executable_orders.append(order)
+                else:
+                    self._conditional_orders.append(order)
+            else:
+                remaining.append(order)
+        self._scheduled_orders = remaining
+
+    def _handle_executable_orders(self, context: Context) -> None:
+        self._executable_orders.sort(key=lambda order: 0 if self._calc_gross_size_delta(order) < 0.0 else 1)
+        for order in self._executable_orders:
+            if order.status != OrderStatus.ACCEPTED:
+                continue
+
+            price = context.get_price("Open", order.ticker)
+            if not pd.isna(price):
+                self._try_execution(order, price, context)
+            else:
+                order.status = OrderStatus.REJECTED
+        self._executable_orders.clear()
+
+    def _handle_conditional_orders(self, context: Context) -> None:
+        self._conditional_orders.sort(key=lambda order: order.role.value, reverse=True)
+        remaining = []
+        for order in self._conditional_orders:
+            if order.status != OrderStatus.ACCEPTED:
+                continue
+            if order.has_expired_at(context.bar_time):
+                order.status = OrderStatus.EXPIRED
+                continue
+
+            fill_price = self._determine_conditional_order_fill_price(order, context)
+            if fill_price is not None:
+                self._try_execution(order, fill_price, context)
+            else:
+                remaining.append(order)
+        self._conditional_orders = remaining
+
+    def _is_below_maintenance(self) -> bool:
+        return self._maintenance_margin > 0.0 and self.equity < self._maintenance_margin * self._gross_exposure
+
+    def _liquidate(self, context: Context) -> None:
+        print("LIQUIDATION: Equity below maintenance margin requirement. Force-closing all positions.")
+        for ticker, position in list(self._positions.items()):
+            price = context.get_price("Close", ticker)
+            if not pd.isna(price):
+                liquidation_order = Order(ticker, OrderType.MARKET, -position.size)
+                self._try_execution(liquidation_order, price, context, is_liquidation=True)
+
+    def _determine_conditional_order_fill_price(self, order: Order, context: Context) -> float | None:
+        if order.order_type == OrderType.LIMIT:
+            trigger_if_greq = order.size < 0.0
+            trigger_price = order.limit_price
+        elif order.order_type == OrderType.STOP:
+            trigger_if_greq = order.size > 0.0
+            trigger_price = order.stop_price
         else:
-            size_pct_to_close = position.size_pct
-            size_to_close = position.size
-            position.size = 0.0
-            position.size_pct = 0.0
+            return None
 
-        self._cash += position.side.sign() * size_to_close * price
+        assert trigger_price is not None
+        open_price = context.get_price("Open", order.ticker)
+        if pd.isna(open_price):
+            return None
+        high_price = context.get_price("High", order.ticker)
+        low_price = context.get_price("Low", order.ticker)
+        fill_price = None
 
-        if PRINT_DEBUG_OUTPUT:
-            print(
-                f"{pd.Timestamp(context.bar_time).date()} ({context.bar_substep.name}) - "
-                + f"Closed {position.side.name} position. Reason: {exit_rule.exit_rule_type.name}, "
-                + f"Ticker: {position.ticker}, Price {price:.2f}, Size: {size_to_close:.2f}, "
-                + f"Total value: {size_to_close * price:.2f}."
+        if trigger_if_greq:
+            if open_price >= trigger_price:
+                fill_price = open_price
+            elif high_price >= trigger_price:
+                fill_price = trigger_price
+        else:
+            if open_price <= trigger_price:
+                fill_price = open_price
+            elif low_price <= trigger_price:
+                fill_price = trigger_price
+
+        return fill_price
+
+    def _try_execution(self, order: Order, base_price: float, context: Context, is_liquidation: bool = False) -> None:
+        sign = 1.0 if order.size > 0.0 else -1.0
+        if order.order_type == OrderType.MARKET:
+            fee = self._taker_fee
+            slippage = self._market_order_slippage
+        elif order.order_type == OrderType.STOP:
+            fee = self._taker_fee
+            slippage = self._stop_order_slippage
+        else:
+            fee = self._maker_fee
+            slippage = 0.0
+        fill_price = base_price * (1.0 + slippage * sign)
+
+        existing_position = self._positions.get(order.ticker)
+        existing_size = existing_position.size if existing_position is not None else 0.0
+        gross_exposure_delta = self._calc_gross_size_delta(order) * fill_price
+
+        fee_cost = abs(order.size * fill_price) * fee
+        if not is_liquidation:
+            if self.equity - fee_cost < self._initial_margin * (self._gross_exposure + gross_exposure_delta):
+                print("MARGIN BREACH: Order exceeds initial margin requirement. Rejected.")
+                order.status = OrderStatus.REJECTED
+                return
+        else:
+            fee_cost += abs(order.size * fill_price) * self._liquidation_fee
+
+        order.status = OrderStatus.FILLED
+        for child in order.child_orders:
+            self.submit_order(child)
+        self._cancel_siblings(order)
+
+        new_size = existing_size + order.size
+
+        self._cash -= order.size * fill_price + fee_cost
+        self.equity -= fee_cost
+        self._gross_exposure += gross_exposure_delta
+        self._long_exposure += max(new_size * fill_price, 0.0) - max(existing_size * fill_price, 0.0)
+        self._short_exposure = self._gross_exposure - self._long_exposure
+
+        if existing_position is None:
+            self._positions[order.ticker] = Position(
+                ticker=order.ticker,
+                size=new_size,
+                avg_price=fill_price,
+                entry_bar_time=context.bar_time,
+                entry_bar_num=context.bar_num,
             )
+            self.opened_positions_counter += 1
+        elif new_size == 0.0:
+            del self._positions[order.ticker]
+            self.closed_positions_counter += 1
+        elif (existing_position.size > 0.0) == (new_size > 0.0):
+            if abs(new_size) > abs(existing_position.size):
+                existing_position.avg_price = (
+                    existing_position.avg_price * existing_position.size + fill_price * order.size
+                ) / new_size
+            existing_position.size = new_size
+        else:
+            del self._positions[order.ticker]
+            self.closed_positions_counter += 1
+            self._positions[order.ticker] = Position(
+                ticker=order.ticker,
+                size=new_size,
+                avg_price=fill_price,
+                entry_bar_time=context.bar_time,
+                entry_bar_num=context.bar_num,
+            )
+            self.opened_positions_counter += 1
+
+    def _cancel_siblings(self, order: Order) -> None:
+        if order.parent_order is not None:
+            for sibling_order in order.parent_order.child_orders:
+                if sibling_order is not order and sibling_order.status == OrderStatus.ACCEPTED:
+                    sibling_order.status = OrderStatus.CANCELED
+
+    def _calc_gross_size_delta(self, order: Order) -> float:
+        existing_position = self._positions.get(order.ticker)
+        existing_size = existing_position.size if existing_position is not None else 0.0
+        return abs(existing_size + order.size) - abs(existing_size)

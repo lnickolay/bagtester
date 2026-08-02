@@ -3,14 +3,12 @@ __pycache__/
 *.pyc
 
 /.venv/
-
 /.vscode/
-
 /.opencode-home/
 
-/src/_wip/
-
 /_notes/
+
+/src/_unused/
 
 /data/ticker_data/*
 !/data/ticker_data/sample/
