@@ -17,7 +17,7 @@ bagtester is a backtesting engine for stock and crypto trading strategies, writt
 - Bracket orders via TP/SL child orders
 - Order lifetimes with delayed order activation
 - Margin and liquidation mechanics
-- Configurable transaction costs and slippage (commission or maker/taker fees)
+- Simplified flat-percentage costs: transaction fees (commission or maker/taker), slippage, margin interest, and asset borrow fees
 - Basic Matplotlib-based analytics (equity curve, drawdown, CAGR)
 - Sample dataset with daily OHLCV data for 20 stocks
 
