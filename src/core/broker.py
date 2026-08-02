@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -29,6 +28,11 @@ class Broker:
 
     _initial_margin: float
     _maintenance_margin: float
+
+    _maker_fee: float
+    _taker_fee: float
+    _market_order_slippage: float
+    _stop_order_slippage: float
     _liquidation_fee: float
 
     # TODO: track opened and closed positions etc differently
@@ -40,6 +44,11 @@ class Broker:
         initial_cash: float = 10000.0,
         initial_margin: float = 1.0,
         maintenance_margin: float = 0.0,
+        commission: float = 0.0,
+        maker_fee: float = 0.0,
+        taker_fee: float = 0.0,
+        market_order_slippage: float = 0.0,
+        stop_order_slippage: float = 0.0,
         liquidation_fee: float = 0.0,
     ) -> None:
         self._cash = initial_cash
@@ -50,6 +59,16 @@ class Broker:
 
         self._initial_margin = initial_margin
         self._maintenance_margin = maintenance_margin
+
+        if commission != 0.0:
+            if maker_fee != 0.0 or taker_fee != 0.0:
+                raise ValueError("Either commissions or maker/taker should be specified, not both.")
+            self._maker_fee = self._taker_fee = commission
+        else:
+            self._maker_fee = maker_fee
+            self._taker_fee = taker_fee
+        self._market_order_slippage = market_order_slippage
+        self._stop_order_slippage = stop_order_slippage
         self._liquidation_fee = liquidation_fee
 
         self._submitted_orders = []
@@ -127,12 +146,12 @@ class Broker:
         self._submitted_orders.clear()
 
     def _handle_scheduled_orders(self, context: Context) -> None:
-        # TODO: use binary heap instead or not worth it?
-        self._scheduled_orders.sort(key=lambda o: o.valid_from_time)  # type: ignore[arg-type]
+        self._scheduled_orders.sort(key=lambda order: order.valid_from_time)  # type: ignore[arg-type]
         remaining = []
         for order in self._scheduled_orders:
             if order.status != OrderStatus.ACCEPTED:
                 continue
+
             if not order.is_scheduled_at(context.bar_time):
                 if order.order_type == OrderType.MARKET:
                     self._executable_orders.append(order)
@@ -143,26 +162,20 @@ class Broker:
         self._scheduled_orders = remaining
 
     def _handle_executable_orders(self, context: Context) -> None:
-        # NOTE: orders are grouped by ticker here so that only one margin check per ticker on the net result is needed,
-        # this changes the execution order of the immediate orders
-        ticker_to_orders: dict[str, list[Order]] = defaultdict(list)
+        self._executable_orders.sort(key=lambda order: 0 if self._calc_gross_size_delta(order) < 0.0 else 1)
         for order in self._executable_orders:
-            if order.status == OrderStatus.ACCEPTED:
-                ticker_to_orders[order.ticker].append(order)
-        self._executable_orders.clear()
-
-        for ticker, orders in ticker_to_orders.items():
-            price = context.get_price("Open", ticker)
-            if pd.isna(price):
+            if order.status != OrderStatus.ACCEPTED:
                 continue
-            net_size = sum(order.size for order in orders)
-            if self._passes_initial_margin(ticker, net_size, price):
-                for order in orders:
-                    self._fill(order, price, context)
+
+            price = context.get_price("Open", order.ticker)
+            if not pd.isna(price):
+                self._try_execution(order, price, context)
+            else:
+                order.status = OrderStatus.REJECTED
+        self._executable_orders.clear()
 
     def _handle_conditional_orders(self, context: Context) -> None:
         self._conditional_orders.sort(key=lambda o: o.role.value, reverse=True)
-
         remaining = []
         for order in self._conditional_orders:
             if order.status != OrderStatus.ACCEPTED:
@@ -172,13 +185,10 @@ class Broker:
                 continue
 
             fill_price = self._determine_conditional_order_fill_price(order, context)
-            if fill_price is None:
-                remaining.append(order)
-            elif not self._passes_initial_margin(order.ticker, order.size, fill_price):
-                order.status = OrderStatus.REJECTED
+            if fill_price is not None:
+                self._try_execution(order, fill_price, context)
             else:
-                self._fill(order, fill_price, context)
-
+                remaining.append(order)
         self._conditional_orders = remaining
 
     def _determine_conditional_order_fill_price(self, order: Order, context: Context) -> float | None:
@@ -193,7 +203,6 @@ class Broker:
 
         assert trigger_price is not None
         open_price = context.get_price("Open", order.ticker)
-        # TODO: add Context helper method for checking if ticker traded on current bar
         if pd.isna(open_price):
             return None
         high_price = context.get_price("High", order.ticker)
@@ -213,57 +222,82 @@ class Broker:
 
         return fill_price
 
-    def _fill(self, order: Order, price: float, context: Context) -> None:
-        order.status = OrderStatus.FILLED
-        self._gross_exposure += self._calc_gross_delta(order.ticker, order.size, price)
-        self._cash -= order.size * price
-
-        for child in order.child_orders:
-            self.submit_order(child)
-
-        self._cancel_siblings(order)
+    def _try_execution(self, order: Order, base_price: float, context: Context, is_liquidation: bool = False) -> None:
+        sign = 1.0 if order.size > 0.0 else -1.0
+        if order.order_type == OrderType.MARKET:
+            fee = self._taker_fee
+            slippage = self._market_order_slippage
+        elif order.order_type == OrderType.STOP:
+            fee = self._taker_fee
+            slippage = self._stop_order_slippage
+        else:
+            fee = self._maker_fee
+            slippage = 0.0
+        fill_price = base_price * (1.0 + slippage * sign)
 
         existing_position = self._positions.get(order.ticker)
+        existing_size = existing_position.size if existing_position is not None else 0.0
+        gross_exposure_delta = self._calc_gross_size_delta(order) * fill_price
 
+        fee_cost = abs(order.size * fill_price) * fee
+        if not is_liquidation:
+            if self.equity - fee_cost < self._initial_margin * (self._gross_exposure + gross_exposure_delta):
+                print("MARGIN BREACH: Order exceeds initial margin requirement. Rejected.")
+                order.status = OrderStatus.REJECTED
+                return
+        else:
+            fee_cost += abs(order.size * fill_price) * self._liquidation_fee
+
+        order.status = OrderStatus.FILLED
+        for child in order.child_orders:
+            self.submit_order(child)
+        self._cancel_siblings(order)
+
+        self._cash -= order.size * fill_price + fee_cost
+        self.equity -= fee_cost
+        self._gross_exposure += gross_exposure_delta
+
+        new_size = existing_size + order.size
         if existing_position is None:
-            self._positions[order.ticker] = Position.from_order(order, price, context.bar_time, context.bar_num)
+            self._positions[order.ticker] = Position(
+                ticker=order.ticker,
+                size=new_size,
+                avg_price=fill_price,
+                entry_bar_time=context.bar_time,
+                entry_bar_num=context.bar_num,
+            )
             self.opened_positions_counter += 1
-            return
-
-        new_size = existing_position.size + order.size
-
-        if new_size == 0:
+        elif new_size == 0.0:
             del self._positions[order.ticker]
             self.closed_positions_counter += 1
-        elif (existing_position.size > 0) == (new_size > 0):
+        elif (existing_position.size > 0.0) == (new_size > 0.0):
+            if abs(new_size) > abs(existing_position.size):
+                existing_position.avg_price = (
+                    existing_position.avg_price * existing_position.size + fill_price * order.size
+                ) / new_size
             existing_position.size = new_size
         else:
             del self._positions[order.ticker]
             self.closed_positions_counter += 1
-            if new_size != 0:
-                flip_position = Position(
-                    ticker=order.ticker,
-                    size=new_size,
-                    entry_price=price,
-                    entry_bar_time=context.bar_time,
-                    entry_bar_num=context.bar_num,
-                )
-                self._positions[order.ticker] = flip_position
-                self.opened_positions_counter += 1
+            self._positions[order.ticker] = Position(
+                ticker=order.ticker,
+                size=new_size,
+                avg_price=fill_price,
+                entry_bar_time=context.bar_time,
+                entry_bar_num=context.bar_num,
+            )
+            self.opened_positions_counter += 1
+
+    def _calc_gross_size_delta(self, order: Order) -> float:
+        existing_position = self._positions.get(order.ticker)
+        existing_size = existing_position.size if existing_position is not None else 0.0
+        return abs(existing_size + order.size) - abs(existing_size)
 
     def _cancel_siblings(self, order: Order) -> None:
         if order.parent_order is not None:
             for sibling_order in order.parent_order.child_orders:
                 if sibling_order is not order and sibling_order.status == OrderStatus.ACCEPTED:
                     sibling_order.status = OrderStatus.CANCELED
-
-    def _passes_initial_margin(self, ticker: str, size: float, price: float) -> bool:
-        new_gross_exposure = self._gross_exposure + self._calc_gross_delta(ticker, size, price)
-        if self.equity < self._initial_margin * new_gross_exposure:
-            print("MARGIN BREACH: Order exceeds initial margin requirement. Rejected.")
-            return False
-        else:
-            return True
 
     def _is_below_maintenance(self) -> bool:
         return self._maintenance_margin > 0.0 and self.equity < self._maintenance_margin * self._gross_exposure
@@ -272,12 +306,6 @@ class Broker:
         print("LIQUIDATION: Equity below maintenance margin requirement. Force-closing all positions.")
         for ticker, position in list(self._positions.items()):
             price = context.get_price("Close", ticker)
-            if pd.isna(price):
-                continue
-            self._fill(Order(ticker, OrderType.MARKET, -position.size), price, context)
-            self._cash -= abs(position.size * price) * self._liquidation_fee
-
-    def _calc_gross_delta(self, ticker: str, size: float, price: float) -> float:
-        existing_position = self._positions.get(ticker)
-        existing_size = existing_position.size if existing_position is not None else 0.0
-        return price * (abs(existing_size + size) - abs(existing_size))
+            if not pd.isna(price):
+                liquidation_order = Order(ticker, OrderType.MARKET, -position.size)
+                self._try_execution(liquidation_order, price, context, is_liquidation=True)
