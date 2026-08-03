@@ -23,6 +23,10 @@ class Context:
         self.bar_time = pd.NaT  # type: ignore[assignment]
         self.bar_num = -1
 
+    @property
+    def bar_count(self) -> int:
+        return len(self.bar_timeline)
+
     def advance_bar(self) -> bool:
         next_bar_num = self.bar_num + 1
         if next_bar_num >= len(self.bar_timeline):

@@ -19,9 +19,9 @@ def test_sma_crossover_strategy() -> None:
     broker = engine.broker
     strategy = SMACrossoverStrategy(engine.broker)
 
-    engine.run_strategy(strategy, price_data)
+    history = engine.run_strategy(strategy, price_data)
 
-    equity_series = broker.get_equity_series()
+    equity_series = history.account_history["equity"]
     eval_metrics = calculate_metrics(equity_series, start_time, end_time)
     fig = plot_pnl_and_drawdowns(equity_series, eval_metrics.drawdown_pct_series)
     save_test_plot(fig, __file__, "pnl_and_drawdowns.png")

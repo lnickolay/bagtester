@@ -10,6 +10,7 @@ import pandas as pd
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
+    from analytics.history import History
     from core.broker import Broker
 
 
@@ -22,8 +23,8 @@ class EvalMetrics:
 
 
 # TODO: show_results() probably shouldn't need to know broker
-def show_results(broker: Broker, start_time: pd.Timestamp, end_time: pd.Timestamp) -> Figure:
-    equity_series = broker.get_equity_series()
+def show_results(broker: Broker, history: History, start_time: pd.Timestamp, end_time: pd.Timestamp) -> Figure:
+    equity_series = history.account_history["equity"]
     eval_metrics = calculate_metrics(equity_series, start_time, end_time)
 
     print(f"Simulated timespan: {eval_metrics.delta_years:.2f} years")

@@ -4,21 +4,24 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from analytics.snapshots import AccountSnapshot
 from core.enums import OrderStatus, OrderType
 from core.order import Order
 from core.position import Position
 
 if TYPE_CHECKING:
+    from analytics.broker_observer import BrokerObserver
     from core.context import Context
 
 
 class Broker:
 
-    _cash: float
+    initial_cash: float
     equity: float
-    _initial_equity: float
-    _equity_history: list[tuple[pd.Timestamp, float]]
+    _cash: float
     _gross_exposure: float
+    _long_exposure: float
+    _short_exposure: float
 
     _submitted_orders: list[Order]
     _scheduled_orders: list[Order]
@@ -37,6 +40,8 @@ class Broker:
     _margin_interest_rate: float
     _asset_borrow_rate: float
 
+    _observers: list[BrokerObserver]
+
     # TODO: track opened and closed positions etc differently
     opened_positions_counter: int
     closed_positions_counter: int
@@ -54,14 +59,14 @@ class Broker:
         stop_order_slippage: float = 0.0,
         margin_interest_rate: float = 0.0,
         asset_borrow_rate: float = 0.0,
+        observers: list[BrokerObserver] = [],
     ) -> None:
-        self._cash = initial_cash
+        self.initial_cash = initial_cash
         self.equity = initial_cash
-        self._initial_equity = initial_cash
-        self._equity_history = []
+        self._cash = initial_cash
+        self._gross_exposure = 0.0
         self._long_exposure = 0.0
         self._short_exposure = 0.0
-        self._gross_exposure = 0.0
 
         self._initial_margin = initial_margin
         self._maintenance_margin = maintenance_margin
@@ -85,12 +90,16 @@ class Broker:
         self._conditional_orders = []
         self._positions = {}
 
+        self._observers = observers
+
         self.opened_positions_counter = 0
         self.closed_positions_counter = 0
 
-    def get_equity_series(self) -> pd.Series:
-        bar_timeline, equities = zip(*self._equity_history)
-        return pd.Series(equities, index=bar_timeline)
+    def add_observer(self, observer: BrokerObserver) -> None:
+        self._observers.append(observer)
+
+    def remove_observer(self, observer: BrokerObserver) -> None:
+        self._observers.remove(observer)
 
     def get_position(self, ticker: str) -> Position | None:
         return self._positions.get(ticker)
@@ -114,6 +123,19 @@ class Broker:
         if self._is_below_maintenance():
             self._liquidate(context)
 
+        self._notify_account_snapshot(
+            AccountSnapshot(
+                equity=self.equity,
+                cash=self._cash,
+                gross_exposure=self._gross_exposure,
+                long_exposure=self._long_exposure,
+                short_exposure=self._short_exposure,
+                margin_interest_cost=margin_interest_cost,
+                asset_borrow_cost=asset_borrow_cost,
+            ),
+            context.bar_num,
+        )
+
     def _update_equity_and_exposure(self, context: Context, price_col: str) -> None:
         new_long_exposure = new_short_exposure = 0.0
         for ticker, position in self._positions.items():
@@ -124,14 +146,9 @@ class Broker:
                 new_short_exposure += abs(position.size * price)
 
         self.equity = self._cash + new_long_exposure - new_short_exposure
+        self._gross_exposure = new_long_exposure + new_short_exposure
         self._long_exposure = new_long_exposure
         self._short_exposure = new_short_exposure
-        self._gross_exposure = new_long_exposure + new_short_exposure
-
-        if price_col == "Close":
-            if not self._equity_history:
-                self._equity_history.append((context.bar_time, self._initial_equity))
-            self._equity_history.append((context.bar_time, self.equity))
 
     def _apply_financing_costs(self, context: Context) -> tuple[float, float]:
         if context.bar_num == 0:
@@ -145,8 +162,8 @@ class Broker:
         asset_borrow_cost = self._short_exposure * self._asset_borrow_rate * elapsed_years
 
         total_cost = margin_interest_cost + asset_borrow_cost
-        self._cash -= total_cost
         self.equity -= total_cost
+        self._cash -= total_cost
         return margin_interest_cost, asset_borrow_cost
 
     def _handle_submitted_orders(self, context: Context) -> None:
@@ -293,8 +310,8 @@ class Broker:
 
         new_size = existing_size + order.size
 
-        self._cash -= order.size * fill_price + fee_cost
         self.equity -= fee_cost
+        self._cash -= order.size * fill_price + fee_cost
         self._gross_exposure += gross_exposure_delta
         self._long_exposure += max(new_size * fill_price, 0.0) - max(existing_size * fill_price, 0.0)
         self._short_exposure = self._gross_exposure - self._long_exposure
@@ -339,3 +356,7 @@ class Broker:
         existing_position = self._positions.get(order.ticker)
         existing_size = existing_position.size if existing_position is not None else 0.0
         return abs(existing_size + order.size) - abs(existing_size)
+
+    def _notify_account_snapshot(self, snapshot: AccountSnapshot, bar_num: int) -> None:
+        for observer in self._observers:
+            observer.on_account_snapshot(snapshot, bar_num)

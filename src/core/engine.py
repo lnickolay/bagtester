@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from analytics.history import History
 from core.broker import Broker
 from core.context import Context
 
@@ -19,25 +20,31 @@ class Engine:
     def __init__(self, broker: Broker | None = None) -> None:
         self.broker = broker or Broker()
 
-    def run_strategy(self, strategy: Strategy, price_data: dict[str, pd.DataFrame]) -> pd.Series:
+    def run_strategy(self, strategy: Strategy, price_data: dict[str, pd.DataFrame]) -> History:
         simulation_timer_start = time.perf_counter()
         indicator_data = strategy.initialize(price_data)
 
         context = Context(price_data, indicator_data)
-        print(f"Simulating trading strategy on {len(price_data)} assets for {len(context.bar_timeline)} trading days.")
+        history = History(context.bar_timeline, self.broker.initial_cash)
+        self.broker.add_observer(history)
+
+        print(f"Simulating trading strategy on {len(price_data)} assets for {context.bar_count} trading days.")
 
         while context.advance_bar():
             self.broker.update(context)
             strategy.process(context)
 
             if (context.bar_num + 1) % 100 == 0:
-                print(f"Progress: {context.bar_num + 1}/{len(context.bar_timeline)} trading days simulated.")
+                print(f"Progress: {context.bar_num + 1}/{context.bar_count} trading days simulated.")
 
         simulation_timer_elapsed = time.perf_counter() - simulation_timer_start
         print(
-            f"Finished simulating trading strategy on {len(price_data)} assets for {len(context.bar_timeline)} trading "
+            f"Finished simulating trading strategy on {len(price_data)} assets for {context.bar_count} trading "
             + f"days. Total time required to simulate strategy: {simulation_timer_elapsed:.1f}s"
         )
         print("-" * 10)
 
-        return self.broker.get_equity_series()
+        self.broker.remove_observer(history)
+        history.finalize()
+
+        return history

@@ -16,6 +16,6 @@ if __name__ == "__main__":
     engine = Engine()
     strategy = SMACrossoverStrategy(engine.broker)
 
-    engine.run_strategy(strategy, price_data)
-    fig = show_results(engine.broker, start_time, end_time)
+    history = engine.run_strategy(strategy, price_data)
+    fig = show_results(engine.broker, history, start_time, end_time)
     plt.show()
