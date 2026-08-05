@@ -1,9 +1,9 @@
 import pandas as pd
 import pytest
 
-from analytics.evaluation import calculate_metrics, plot_pnl_and_drawdowns
 from core.data_loader import YFinanceDataLoader
 from core.engine import Engine
+from evaluation.plotting import plot_pnl_and_drawdowns
 from inttests.helpers import save_test_plot
 from strategies.short_the_gap_strategy import ShortTheGapStrategy
 
@@ -16,18 +16,15 @@ def test_short_the_gap_strategy() -> None:
     price_data = data_loader.load_price_data(tickers, start_time, end_time)
 
     engine = Engine()
-    broker = engine.broker
-    strategy = ShortTheGapStrategy(broker)
+    strategy = ShortTheGapStrategy(engine.broker)
 
-    history = engine.run_strategy(strategy, price_data)
+    analysis = engine.run_strategy(strategy, price_data)
 
-    equity_series = history.account_history["equity"]
-    eval_metrics = calculate_metrics(equity_series, start_time, end_time)
-    fig = plot_pnl_and_drawdowns(equity_series, eval_metrics.drawdown_pct_series)
+    fig = plot_pnl_and_drawdowns(analysis.series["equity"], analysis.series["drawdown"])
     save_test_plot(fig, __file__, "pnl_and_drawdowns.png")
 
-    assert broker.opened_positions_counter == 33
-    assert broker.closed_positions_counter == 33
-    assert eval_metrics.delta_years == pytest.approx(9.99883638952203)
-    assert eval_metrics.cagr_pct == pytest.approx(0.151887501940684)
-    assert eval_metrics.max_drawdown_pct == pytest.approx(-4.698777618061622)
+    assert analysis.opened_position_count == 33
+    assert analysis.closed_position_count == 33
+    assert analysis.duration_years == pytest.approx(9.993360575508055)
+    assert analysis.cagr == pytest.approx(0.0015197079117676981)
+    assert analysis.max_drawdown == pytest.approx(-0.04698777618061622)

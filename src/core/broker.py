@@ -4,13 +4,13 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from analytics.snapshots import AccountSnapshot
 from core.enums import OrderStatus, OrderType
+from core.events import AccountSnapshot
 from core.order import Order
 from core.position import Position
 
 if TYPE_CHECKING:
-    from analytics.broker_observer import BrokerObserver
+    from core.broker_observer import BrokerObserver
     from core.context import Context
 
 
@@ -41,10 +41,6 @@ class Broker:
     _asset_borrow_rate: float
 
     _observers: list[BrokerObserver]
-
-    # TODO: track opened and closed positions etc differently
-    opened_positions_counter: int
-    closed_positions_counter: int
 
     def __init__(
         self,
@@ -91,9 +87,6 @@ class Broker:
         self._positions = {}
 
         self._observers = observers
-
-        self.opened_positions_counter = 0
-        self.closed_positions_counter = 0
 
     def add_observer(self, observer: BrokerObserver) -> None:
         self._observers.append(observer)
@@ -156,7 +149,7 @@ class Broker:
 
         prev_bar_time = context.bar_timeline[context.bar_num - 1]
         elapsed_years = (context.bar_time - prev_bar_time).total_seconds() / (365 * 86400)
-        borrowed_cash = max(0.0, self._long_exposure - self.equity)
+        borrowed_cash = max(-self._cash, 0.0)
 
         margin_interest_cost = borrowed_cash * self._margin_interest_rate * elapsed_years
         asset_borrow_cost = self._short_exposure * self._asset_borrow_rate * elapsed_years
@@ -317,34 +310,44 @@ class Broker:
         self._short_exposure = self._gross_exposure - self._long_exposure
 
         if existing_position is None:
-            self._positions[order.ticker] = Position(
+            new_position = Position(
                 ticker=order.ticker,
                 size=new_size,
                 avg_price=fill_price,
                 entry_bar_time=context.bar_time,
                 entry_bar_num=context.bar_num,
             )
-            self.opened_positions_counter += 1
+            self._positions[order.ticker] = new_position
+            self._notify_position_opened(new_position)
+
         elif new_size == 0.0:
+            existing_position.exit_bar_time = context.bar_time
+            existing_position.exit_bar_num = context.bar_num
             del self._positions[order.ticker]
-            self.closed_positions_counter += 1
+            self._notify_position_closed(existing_position)
+
         elif (existing_position.size > 0.0) == (new_size > 0.0):
             if abs(new_size) > abs(existing_position.size):
                 existing_position.avg_price = (
                     existing_position.avg_price * existing_position.size + fill_price * order.size
                 ) / new_size
             existing_position.size = new_size
+
         else:
+            existing_position.exit_bar_time = context.bar_time
+            existing_position.exit_bar_num = context.bar_num
             del self._positions[order.ticker]
-            self.closed_positions_counter += 1
-            self._positions[order.ticker] = Position(
+            self._notify_position_closed(existing_position)
+
+            new_position = Position(
                 ticker=order.ticker,
                 size=new_size,
                 avg_price=fill_price,
                 entry_bar_time=context.bar_time,
                 entry_bar_num=context.bar_num,
             )
-            self.opened_positions_counter += 1
+            self._positions[order.ticker] = new_position
+            self._notify_position_opened(new_position)
 
     def _cancel_siblings(self, order: Order) -> None:
         if order.parent_order is not None:
@@ -360,3 +363,11 @@ class Broker:
     def _notify_account_snapshot(self, snapshot: AccountSnapshot, bar_num: int) -> None:
         for observer in self._observers:
             observer.on_account_snapshot(snapshot, bar_num)
+
+    def _notify_position_opened(self, position: Position) -> None:
+        for observer in self._observers:
+            observer.on_position_opened(position)
+
+    def _notify_position_closed(self, position: Position) -> None:
+        for observer in self._observers:
+            observer.on_position_closed(position)

@@ -1,9 +1,9 @@
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from analytics.evaluation import show_results
 from core.data_loader import YFinanceDataLoader
 from core.engine import Engine
+from evaluation.plotting import plot_pnl_and_drawdowns
 from strategies.sma_crossover_strategy import SMACrossoverStrategy
 
 if __name__ == "__main__":
@@ -16,6 +16,7 @@ if __name__ == "__main__":
     engine = Engine()
     strategy = SMACrossoverStrategy(engine.broker)
 
-    history = engine.run_strategy(strategy, price_data)
-    fig = show_results(engine.broker, history, start_time, end_time)
+    analysis = engine.run_strategy(strategy, price_data)
+
+    fig = plot_pnl_and_drawdowns(analysis.series["equity"], analysis.series["drawdown"])
     plt.show()
