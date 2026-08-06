@@ -25,7 +25,7 @@ bagtester is a backtesting engine for stock and crypto trading strategies, writt
 
 ### Requirements
 
-- Python 3.11
+- Python 3.14
 - pip
 
 ### Linux / macOS
@@ -47,7 +47,7 @@ python src/main.py
 git clone https://github.com/lnickolay/bagtester.git
 cd bagtester
 
-py -3.11 -m venv .venv
+py -3.14 -m venv .venv
 .venv\Scripts\activate
 
 pip install -r requirements.txt
@@ -56,8 +56,8 @@ python src/main.py
 
 ## Dependencies
 
-- Python 3.11
-- pandas, numpy, matplotlib, yfinance
+- Python 3.14
+- matplotlib, mplfinance, numpy, pandas, yfinance
 
 ## Status
 

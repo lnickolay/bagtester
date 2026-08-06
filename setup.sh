@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# TODO: validate Python version (python3 may point to the wrong interpreter)
 if [ "${1:-}" != "--global" ]; then
-    python3.11 -m venv .venv
+    python3 -m venv .venv
     source .venv/bin/activate
 fi
 
