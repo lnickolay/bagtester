@@ -125,8 +125,7 @@ class Broker:
                 short_exposure=self._short_exposure,
                 margin_interest_cost=margin_interest_cost,
                 asset_borrow_cost=asset_borrow_cost,
-            ),
-            context.bar_num,
+            )
         )
 
     def _update_equity_and_exposure(self, context: Context, price_col: str) -> None:
@@ -379,9 +378,9 @@ class Broker:
         existing_size = existing_position.size if existing_position is not None else 0.0
         return abs(existing_size + order.size) - abs(existing_size)
 
-    def _notify_account_snapshot(self, snapshot: AccountSnapshot, bar_num: int) -> None:
+    def _notify_account_snapshot(self, snapshot: AccountSnapshot) -> None:
         for observer in self._observers:
-            observer.on_account_snapshot(snapshot, bar_num)
+            observer.on_account_snapshot(snapshot)
 
     def _notify_order_executed(self, execution: Execution) -> None:
         for observer in self._observers:

@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 class BrokerObserver(ABC):
 
-    def on_account_snapshot(self, snapshot: AccountSnapshot, bar_num: int) -> None:
+    def on_account_snapshot(self, snapshot: AccountSnapshot) -> None:
         pass
 
     def on_order_executed(self, execution: Execution) -> None:

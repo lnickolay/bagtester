@@ -26,7 +26,7 @@ class Engine:
         indicator_data = strategy.initialize(price_data)
 
         context = Context(price_data, indicator_data)
-        history = History(len(context.bar_timeline))
+        history = History()
         self.broker.add_observer(history)
 
         print(f"Simulating trading strategy on {len(price_data)} assets for {context.bar_count} trading days.")
@@ -46,7 +46,7 @@ class Engine:
         print("-" * 10)
 
         self.broker.remove_observer(history)
-        history.finalize()
+        history.finalize_open_trades()
 
         analysis = Analysis(history, context.bar_timeline, self.broker.initial_cash)
         return analysis
