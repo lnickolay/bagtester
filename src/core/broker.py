@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 from core.enums import OrderStatus, OrderType
-from core.events import AccountSnapshot
+from core.events import AccountSnapshot, Execution
 from core.order import Order
 from core.position import Position
 
@@ -273,13 +273,10 @@ class Broker:
     def _try_execution(self, order: Order, base_price: float, context: Context, is_liquidation: bool = False) -> None:
         sign = 1.0 if order.size > 0.0 else -1.0
         if order.order_type == OrderType.MARKET:
-            fee = self._taker_fee
             slippage = self._market_order_slippage
         elif order.order_type == OrderType.STOP:
-            fee = self._taker_fee
             slippage = self._stop_order_slippage
         else:
-            fee = self._maker_fee
             slippage = 0.0
         fill_price = base_price * (1.0 + slippage * sign)
 
@@ -287,24 +284,46 @@ class Broker:
         existing_size = existing_position.size if existing_position is not None else 0.0
         gross_exposure_delta = self._calc_gross_size_delta(order) * fill_price
 
-        fee_cost = abs(order.size * fill_price) * fee
+        abs_order_value = abs(order.size * fill_price)
+        if order.order_type in (OrderType.MARKET, OrderType.STOP):
+            maker_fee_cost = 0.0
+            taker_fee_cost = abs_order_value * self._taker_fee
+        else:
+            maker_fee_cost = abs_order_value * self._maker_fee
+            taker_fee_cost = 0.0
+        liquidation_fee_cost = abs_order_value * self._liquidation_fee if is_liquidation else 0.0
+        total_fee_cost = maker_fee_cost + taker_fee_cost + liquidation_fee_cost
+
         if not is_liquidation:
-            if self.equity - fee_cost < self._initial_margin * (self._gross_exposure + gross_exposure_delta):
+            if self.equity - total_fee_cost < self._initial_margin * (self._gross_exposure + gross_exposure_delta):
                 print("MARGIN BREACH: Order exceeds initial margin requirement. Rejected.")
                 order.status = OrderStatus.REJECTED
                 return
-        else:
-            fee_cost += abs(order.size * fill_price) * self._liquidation_fee
 
         order.status = OrderStatus.FILLED
         for child in order.child_orders:
             self.submit_order(child)
         self._cancel_siblings(order)
 
+        self._notify_order_executed(
+            Execution(
+                ticker=order.ticker,
+                bar_time=context.bar_time,
+                bar_num=context.bar_num,
+                size=order.size,
+                base_price=base_price,
+                fill_price=fill_price,
+                maker_fee_cost=maker_fee_cost,
+                taker_fee_cost=taker_fee_cost,
+                liquidation_fee_cost=liquidation_fee_cost,
+                is_liquidation=is_liquidation,
+            )
+        )
+
         new_size = existing_size + order.size
 
-        self.equity -= fee_cost
-        self._cash -= order.size * fill_price + fee_cost
+        self.equity -= total_fee_cost
+        self._cash -= order.size * fill_price + total_fee_cost
         self._gross_exposure += gross_exposure_delta
         self._long_exposure += max(new_size * fill_price, 0.0) - max(existing_size * fill_price, 0.0)
         self._short_exposure = self._gross_exposure - self._long_exposure
@@ -363,6 +382,10 @@ class Broker:
     def _notify_account_snapshot(self, snapshot: AccountSnapshot, bar_num: int) -> None:
         for observer in self._observers:
             observer.on_account_snapshot(snapshot, bar_num)
+
+    def _notify_order_executed(self, execution: Execution) -> None:
+        for observer in self._observers:
+            observer.on_order_executed(execution)
 
     def _notify_position_opened(self, position: Position) -> None:
         for observer in self._observers:

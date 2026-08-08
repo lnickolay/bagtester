@@ -43,8 +43,8 @@ class Analysis:
         self.series["drawdown"] = (self.series["equity"] - running_max_series) / running_max_series
 
     def _calc_stats_and_metrics(self, history: History) -> None:
-        self.opened_position_count = len(history.positions)
-        self.closed_position_count = sum(position.exit_bar_time is not None for position in history.positions)
+        self.opened_position_count = sum(len(ticker_trades) for ticker_trades in history.trades.values())
+        self.closed_position_count = self.opened_position_count - len(history.open_trades)
 
         start_time = self.series.index[0]
         end_time = self.series.index[-1]

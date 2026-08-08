@@ -4,9 +4,9 @@ from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
-import pandas as pd
 
 if TYPE_CHECKING:
+    import pandas as pd
     from matplotlib.figure import Figure
 
 

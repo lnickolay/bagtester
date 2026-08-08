@@ -3,14 +3,14 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-import pandas as pd
-
 from core.broker import Broker
 from core.context import Context
 from evaluation.analysis import Analysis
 from evaluation.history import History
 
 if TYPE_CHECKING:
+    import pandas as pd
+
     from core.strategy import Strategy
 
 
@@ -46,6 +46,7 @@ class Engine:
         print("-" * 10)
 
         self.broker.remove_observer(history)
-        analysis = Analysis(history, context.bar_timeline, self.broker.initial_cash)
+        history.finalize()
 
+        analysis = Analysis(history, context.bar_timeline, self.broker.initial_cash)
         return analysis
