@@ -19,7 +19,7 @@ warn_unused_ignores = true
 exclude = "src/_unused/"
 
 [[tool.mypy.overrides]]
-module = "yfinance.*"
+module = [ "mplfinance.*", "yfinance.*"]
 ignore_missing_imports = true
 
 [tool.pytest]

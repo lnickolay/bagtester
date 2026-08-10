@@ -21,7 +21,7 @@ class Engine:
     def __init__(self, broker: Broker | None = None) -> None:
         self.broker = broker or Broker()
 
-    def run_strategy(self, strategy: Strategy, price_data: dict[str, pd.DataFrame]) -> Analysis:
+    def run_strategy(self, strategy: Strategy, price_data: dict[str, pd.DataFrame]) -> tuple[Analysis, History]:
         simulation_timer_start = time.perf_counter()
         indicator_data = strategy.initialize(price_data)
 
@@ -47,6 +47,5 @@ class Engine:
 
         self.broker.remove_observer(history)
         history.finalize_open_trades()
-
         analysis = Analysis(history, context.bar_timeline, self.broker.initial_cash)
-        return analysis
+        return analysis, history

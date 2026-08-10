@@ -8,9 +8,12 @@ __pycache__/
 
 /_notes/
 
+/src/_test/
 /src/_unused/
 
 /data/ticker_data/*
 !/data/ticker_data/sample/
+
+/output/
 
 /inttests/**/output/
