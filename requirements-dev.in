@@ -1,6 +1,6 @@
-black==26.5.1
-isort==8.0.1
-mypy==2.3.0
-pandas-stubs==3.0.3.260530
-pip-tools==7.5.3
-pytest==9.1.1
+black
+isort
+mypy
+pandas-stubs
+pip-tools
+pytest

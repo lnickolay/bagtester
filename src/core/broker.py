@@ -5,20 +5,23 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 from core.enums import OrderStatus, OrderType
+from core.events import AccountSnapshot, Execution
 from core.order import Order
 from core.position import Position
 
 if TYPE_CHECKING:
+    from core.broker_observer import BrokerObserver
     from core.context import Context
 
 
 class Broker:
 
-    _cash: float
+    initial_cash: float
     equity: float
-    _initial_equity: float
-    _equity_history: list[tuple[pd.Timestamp, float]]
+    _cash: float
     _gross_exposure: float
+    _long_exposure: float
+    _short_exposure: float
 
     _submitted_orders: list[Order]
     _scheduled_orders: list[Order]
@@ -37,9 +40,7 @@ class Broker:
     _margin_interest_rate: float
     _asset_borrow_rate: float
 
-    # TODO: track opened and closed positions etc differently
-    opened_positions_counter: int
-    closed_positions_counter: int
+    _observers: list[BrokerObserver]
 
     def __init__(
         self,
@@ -54,14 +55,14 @@ class Broker:
         stop_order_slippage: float = 0.0,
         margin_interest_rate: float = 0.0,
         asset_borrow_rate: float = 0.0,
+        observers: list[BrokerObserver] = [],
     ) -> None:
-        self._cash = initial_cash
+        self.initial_cash = initial_cash
         self.equity = initial_cash
-        self._initial_equity = initial_cash
-        self._equity_history = []
+        self._cash = initial_cash
+        self._gross_exposure = 0.0
         self._long_exposure = 0.0
         self._short_exposure = 0.0
-        self._gross_exposure = 0.0
 
         self._initial_margin = initial_margin
         self._maintenance_margin = maintenance_margin
@@ -85,12 +86,13 @@ class Broker:
         self._conditional_orders = []
         self._positions = {}
 
-        self.opened_positions_counter = 0
-        self.closed_positions_counter = 0
+        self._observers = observers
 
-    def get_equity_series(self) -> pd.Series:
-        bar_timeline, equities = zip(*self._equity_history)
-        return pd.Series(equities, index=bar_timeline)
+    def add_observer(self, observer: BrokerObserver) -> None:
+        self._observers.append(observer)
+
+    def remove_observer(self, observer: BrokerObserver) -> None:
+        self._observers.remove(observer)
 
     def get_position(self, ticker: str) -> Position | None:
         return self._positions.get(ticker)
@@ -114,6 +116,18 @@ class Broker:
         if self._is_below_maintenance():
             self._liquidate(context)
 
+        self._notify_account_snapshot(
+            AccountSnapshot(
+                equity=self.equity,
+                cash=self._cash,
+                gross_exposure=self._gross_exposure,
+                long_exposure=self._long_exposure,
+                short_exposure=self._short_exposure,
+                margin_interest_cost=margin_interest_cost,
+                asset_borrow_cost=asset_borrow_cost,
+            )
+        )
+
     def _update_equity_and_exposure(self, context: Context, price_col: str) -> None:
         new_long_exposure = new_short_exposure = 0.0
         for ticker, position in self._positions.items():
@@ -124,14 +138,9 @@ class Broker:
                 new_short_exposure += abs(position.size * price)
 
         self.equity = self._cash + new_long_exposure - new_short_exposure
+        self._gross_exposure = new_long_exposure + new_short_exposure
         self._long_exposure = new_long_exposure
         self._short_exposure = new_short_exposure
-        self._gross_exposure = new_long_exposure + new_short_exposure
-
-        if price_col == "Close":
-            if not self._equity_history:
-                self._equity_history.append((context.bar_time, self._initial_equity))
-            self._equity_history.append((context.bar_time, self.equity))
 
     def _apply_financing_costs(self, context: Context) -> tuple[float, float]:
         if context.bar_num == 0:
@@ -139,14 +148,14 @@ class Broker:
 
         prev_bar_time = context.bar_timeline[context.bar_num - 1]
         elapsed_years = (context.bar_time - prev_bar_time).total_seconds() / (365 * 86400)
-        borrowed_cash = max(0.0, self._long_exposure - self.equity)
+        borrowed_cash = max(-self._cash, 0.0)
 
         margin_interest_cost = borrowed_cash * self._margin_interest_rate * elapsed_years
         asset_borrow_cost = self._short_exposure * self._asset_borrow_rate * elapsed_years
 
         total_cost = margin_interest_cost + asset_borrow_cost
-        self._cash -= total_cost
         self.equity -= total_cost
+        self._cash -= total_cost
         return margin_interest_cost, asset_borrow_cost
 
     def _handle_submitted_orders(self, context: Context) -> None:
@@ -263,13 +272,10 @@ class Broker:
     def _try_execution(self, order: Order, base_price: float, context: Context, is_liquidation: bool = False) -> None:
         sign = 1.0 if order.size > 0.0 else -1.0
         if order.order_type == OrderType.MARKET:
-            fee = self._taker_fee
             slippage = self._market_order_slippage
         elif order.order_type == OrderType.STOP:
-            fee = self._taker_fee
             slippage = self._stop_order_slippage
         else:
-            fee = self._maker_fee
             slippage = 0.0
         fill_price = base_price * (1.0 + slippage * sign)
 
@@ -277,57 +283,89 @@ class Broker:
         existing_size = existing_position.size if existing_position is not None else 0.0
         gross_exposure_delta = self._calc_gross_size_delta(order) * fill_price
 
-        fee_cost = abs(order.size * fill_price) * fee
+        abs_order_value = abs(order.size * fill_price)
+        if order.order_type in (OrderType.MARKET, OrderType.STOP):
+            maker_fee_cost = 0.0
+            taker_fee_cost = abs_order_value * self._taker_fee
+        else:
+            maker_fee_cost = abs_order_value * self._maker_fee
+            taker_fee_cost = 0.0
+        liquidation_fee_cost = abs_order_value * self._liquidation_fee if is_liquidation else 0.0
+        total_fee_cost = maker_fee_cost + taker_fee_cost + liquidation_fee_cost
+
         if not is_liquidation:
-            if self.equity - fee_cost < self._initial_margin * (self._gross_exposure + gross_exposure_delta):
+            if self.equity - total_fee_cost < self._initial_margin * (self._gross_exposure + gross_exposure_delta):
                 print("MARGIN BREACH: Order exceeds initial margin requirement. Rejected.")
                 order.status = OrderStatus.REJECTED
                 return
-        else:
-            fee_cost += abs(order.size * fill_price) * self._liquidation_fee
 
         order.status = OrderStatus.FILLED
         for child in order.child_orders:
             self.submit_order(child)
         self._cancel_siblings(order)
 
+        self._notify_order_executed(
+            Execution(
+                ticker=order.ticker,
+                bar_time=context.bar_time,
+                bar_num=context.bar_num,
+                size=order.size,
+                base_price=base_price,
+                fill_price=fill_price,
+                maker_fee_cost=maker_fee_cost,
+                taker_fee_cost=taker_fee_cost,
+                liquidation_fee_cost=liquidation_fee_cost,
+                is_liquidation=is_liquidation,
+            )
+        )
+
         new_size = existing_size + order.size
 
-        self._cash -= order.size * fill_price + fee_cost
-        self.equity -= fee_cost
+        self.equity -= total_fee_cost
+        self._cash -= order.size * fill_price + total_fee_cost
         self._gross_exposure += gross_exposure_delta
         self._long_exposure += max(new_size * fill_price, 0.0) - max(existing_size * fill_price, 0.0)
         self._short_exposure = self._gross_exposure - self._long_exposure
 
         if existing_position is None:
-            self._positions[order.ticker] = Position(
+            new_position = Position(
                 ticker=order.ticker,
                 size=new_size,
                 avg_price=fill_price,
                 entry_bar_time=context.bar_time,
                 entry_bar_num=context.bar_num,
             )
-            self.opened_positions_counter += 1
+            self._positions[order.ticker] = new_position
+            self._notify_position_opened(new_position)
+
         elif new_size == 0.0:
+            existing_position.exit_bar_time = context.bar_time
+            existing_position.exit_bar_num = context.bar_num
             del self._positions[order.ticker]
-            self.closed_positions_counter += 1
+            self._notify_position_closed(existing_position)
+
         elif (existing_position.size > 0.0) == (new_size > 0.0):
             if abs(new_size) > abs(existing_position.size):
                 existing_position.avg_price = (
                     existing_position.avg_price * existing_position.size + fill_price * order.size
                 ) / new_size
             existing_position.size = new_size
+
         else:
+            existing_position.exit_bar_time = context.bar_time
+            existing_position.exit_bar_num = context.bar_num
             del self._positions[order.ticker]
-            self.closed_positions_counter += 1
-            self._positions[order.ticker] = Position(
+            self._notify_position_closed(existing_position)
+
+            new_position = Position(
                 ticker=order.ticker,
                 size=new_size,
                 avg_price=fill_price,
                 entry_bar_time=context.bar_time,
                 entry_bar_num=context.bar_num,
             )
-            self.opened_positions_counter += 1
+            self._positions[order.ticker] = new_position
+            self._notify_position_opened(new_position)
 
     def _cancel_siblings(self, order: Order) -> None:
         if order.parent_order is not None:
@@ -339,3 +377,19 @@ class Broker:
         existing_position = self._positions.get(order.ticker)
         existing_size = existing_position.size if existing_position is not None else 0.0
         return abs(existing_size + order.size) - abs(existing_size)
+
+    def _notify_account_snapshot(self, snapshot: AccountSnapshot) -> None:
+        for observer in self._observers:
+            observer.on_account_snapshot(snapshot)
+
+    def _notify_order_executed(self, execution: Execution) -> None:
+        for observer in self._observers:
+            observer.on_order_executed(execution)
+
+    def _notify_position_opened(self, position: Position) -> None:
+        for observer in self._observers:
+            observer.on_position_opened(position)
+
+    def _notify_position_closed(self, position: Position) -> None:
+        for observer in self._observers:
+            observer.on_position_closed(position)

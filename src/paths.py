@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+OUTPUT_DIR = ROOT / "output"
 TICKER_DATA = ROOT / "data" / "ticker_data"
 TICKER_LISTS = ROOT / "data" / "ticker_lists"
 

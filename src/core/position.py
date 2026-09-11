@@ -15,3 +15,5 @@ class Position:
     avg_price: float
     entry_bar_time: pd.Timestamp
     entry_bar_num: int
+    exit_bar_time: pd.Timestamp | None = None
+    exit_bar_num: int | None = None

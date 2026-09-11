@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-
-import pandas as pd
+from typing import TYPE_CHECKING
 
 from core.enums import OrderRole, OrderStatus, OrderType
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 @dataclass
