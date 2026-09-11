@@ -2,11 +2,15 @@
 
 ## Project Overview
 
-bagtester is a backtesting engine for stock and crypto trading strategies, written in Python. It simulates trading strategies bar by bar using historical OHLCV data. Custom strategies are built by subclassing the `Strategy` base class. The engine supports market, limit, and stop orders with TP/SL child orders, order lifetimes, multi-asset portfolios, margin/liquidation mechanics, and produces equity curves with performance metrics.
+bagtester is a backtesting engine for stock and crypto trading strategies, written in Python. It simulates trading strategies bar by bar using historical OHLCV data. Custom strategies are built by subclassing the `Strategy` base class. The engine supports market, limit, and stop orders with TP/SL child orders, order lifetimes, multi-asset portfolios, and margin/liquidation mechanics. It visualizes results with PnL curves, drawdown charts, and per-trade candlestick plots with buy/sell markers.
 
-### Example Output Plot
+### Example Output Plot: PnL Curve and Drawdowns
 
-![Sample Run Plot](assets/sample_run_plot.png)
+![Example PnL Curve and Drawdowns Plot](assets/example_pnl_dd_plot.png)
+
+### Example Output Plot: Candlestick Chart of Trade with Buy/Sell Markers
+
+![Example Candlestick Plot](assets/example_candlestick_plot.png)
 
 ## Features
 
@@ -18,7 +22,8 @@ bagtester is a backtesting engine for stock and crypto trading strategies, writt
 - Order lifetimes with delayed order activation
 - Margin and liquidation mechanics
 - Simplified flat-percentage costs: transaction fees (commission or maker/taker), slippage, margin interest, and asset borrow fees
-- Basic Matplotlib-based analytics (equity curve, drawdown, CAGR)
+- PnL curve, drawdown, and CAGR analytics
+- Per-trade candlestick charts with buy/sell markers
 - Sample dataset with daily OHLCV data for 20 stocks
 
 ## Setup & Run

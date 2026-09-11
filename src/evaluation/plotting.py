@@ -98,6 +98,14 @@ def _plot_trade_chart(price_data: dict[str, pd.DataFrame], trade: Trade, trade_n
             mpf.make_addplot(sell_markers, type="scatter", markersize=_MARKER_SIZE, marker="v", color=_MPF_CHARLES_RED)
         )
 
-    fig, axlist = mpf.plot(df_window, type="candle", style="charles", addplot=addplots, figsize=(12, 8), returnfig=True)
+    fig, axlist = mpf.plot(
+        df_window,
+        type="candle",
+        style="charles",
+        addplot=addplots,
+        figsize=(12, 8),
+        returnfig=True,
+        scale_padding={"left": 0.2, "right": 0.7, "top": 0.5, "bottom": 0.5},
+    )
     axlist[0].set_title(f"{trade.ticker} trade #{trade_num}")
     return cast(Figure, fig)
